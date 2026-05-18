@@ -1,0 +1,34 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{float}
+
+\title{Testing CairoMakie with Knit}
+\author{Urtzi}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{CairoMakie Scatter Plot}
+
+\begin{figure}[H]
+<<makie-scatter>>=
+using CairoMakie
+f = Figure()
+ax = Axis(f[1,1], title="Scatter Plot")
+scatter!(ax, randn(100), randn(100))
+f
+@
+\caption{This is the caption of the figure}\label{fig:testfig}
+\end{figure}
+
+\section{CairoMakie Lines}
+
+<<makie-lines>>=
+f = Figure()
+ax = Axis(f[1,1], title="Line Plot", xlabel="x", ylabel="y")
+lines!(ax, 0:0.1:10, sin.(0:0.1:10))
+f
+@
+
+\end{document}

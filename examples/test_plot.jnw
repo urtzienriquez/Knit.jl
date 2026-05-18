@@ -1,0 +1,30 @@
+\documentclass{article}
+\usepackage{amsmath}
+
+\title{Testing Figures in Knit}
+\author{Urtzi}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Simple Plot}
+
+<<plot-chunk>>=
+using Plots
+plot(randn(100), title="Random Walk", xlabel="Step", ylabel="Value")
+@
+
+\section{Multiple Plots}
+
+<<multi-plot>>=
+p1 = plot(randn(100), title="Walk 1")
+p2 = plot(randn(100), title="Walk 2")
+plot(p1, p2, layout=(2,1))
+@
+
+\section{Inline Result}
+
+We generated \Sexpr{length(randn(100))} random numbers.
+
+\end{document}

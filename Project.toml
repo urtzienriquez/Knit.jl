@@ -1,0 +1,8 @@
+name = "Knit"
+uuid = "5fce85da-7251-4ef1-a53c-6bd2439e26ef"
+version = "0.1.0"
+
+[deps]
+
+[compat]
+julia = "1.6"

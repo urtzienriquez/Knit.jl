@@ -1,0 +1,53 @@
+\documentclass{article}
+\usepackage{amsmath}
+
+\title{Testing Knit}
+\author{Urtzi}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+This document demonstrates a simple knitr-like workflow for Julia.
+
+\section{Setup}
+
+First, let's load some packages:
+
+<<setup>>=
+using Statistics
+using Random
+Random.seed!(42)
+@
+
+\section{Data Generation}
+
+Now we generate some data:
+
+<<data>>=
+n = 10
+x = randn(n)
+println("Generated $n random numbers")
+@
+
+\section{Analysis}
+
+The mean is \Sexpr{round(mean(x), digits=3)} and the standard deviation 
+is \Sexpr{round(std(x), digits=3)}.
+
+Let's compute some statistics:
+
+<<stats>>=
+m = mean(x)
+s = std(x)
+println("Mean: ", round(m, digits=3))
+println("Std:  ", round(s, digits=3))
+@
+
+\section{Conclusion}
+
+We analyzed \Sexpr{n} data points.
+
+\end{document}

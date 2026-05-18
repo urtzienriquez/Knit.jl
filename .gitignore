@@ -1,0 +1,8 @@
+Manifest.toml
+_minted/
+*_figures/
+*.aux
+*.log
+*.pdf
+*.tex
+usage_and_expansion.jl

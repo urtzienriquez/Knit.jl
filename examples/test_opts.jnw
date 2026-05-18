@@ -1,0 +1,42 @@
+\documentclass{article}
+\usepackage{amsmath}
+
+\title{Testing Chunk Options}
+\author{Urtzi}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Default behavior (echo=true, eval=true)}
+
+<<default>>=
+x = 42
+println("x = $x")
+@
+
+\section{echo=false (code hidden, output shown)}
+
+<<hidden_code, echo=false>>=
+y = 100
+println("y = $y")
+@
+
+\section{eval=false (code shown, not executed)}
+
+<<no_exec, eval=false>>=
+z = 999
+println("this should NOT appear")
+@
+
+\section{results="hide" (code shown, output hidden)}
+
+<<hide_output, results="hide">>=
+println("this output should NOT appear")
+@
+
+\section{Conclusion}
+
+The value of x is \Sexpr{x} and y is \Sexpr{y}.
+
+\end{document}

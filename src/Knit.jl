@@ -1,14 +1,129 @@
 module Knit
 
-export knit
+using Tokenize
 
-# Minted environment strings (from Weave.jl's LaTeXMinted)
+export knit, compile_pdf
+
+# Pandoc-style token macros (colors match knitr/pandoc defaults)
+const TOKEN_MACROS = Dict{Symbol,String}(
+    :COMMENT     => "\\CommentTok",
+    :FUNCTION    => "\\FunctionTok",
+    :RETURN      => "\\FunctionTok",
+    :USING       => "\\KeywordTok",
+    :IMPORT      => "\\KeywordTok",
+    :EXPORT      => "\\KeywordTok",
+    :MODULE      => "\\KeywordTok",
+    :CONST       => "\\KeywordTok",
+    :STRUCT      => "\\KeywordTok",
+    :MUTABLE     => "\\KeywordTok",
+    :TYPE        => "\\KeywordTok",
+    :END         => "\\KeywordTok",
+    :FOR         => "\\KeywordTok",
+    :WHILE       => "\\KeywordTok",
+    :IF          => "\\KeywordTok",
+    :ELSE        => "\\KeywordTok",
+    :ELSEIF      => "\\KeywordTok",
+    :DO          => "\\KeywordTok",
+    :BREAK       => "\\KeywordTok",
+    :CONTINUE    => "\\KeywordTok",
+    :LET         => "\\KeywordTok",
+    :BEGIN       => "\\KeywordTok",
+    :QUOTE       => "\\KeywordTok",
+    :MACRO       => "\\KeywordTok",
+    :AT_SIGN     => "\\FunctionTok",
+    :COLON       => "\\NormalTok",
+    :COMMA       => "\\NormalTok",
+    :LPAREN      => "\\NormalTok",
+    :RPAREN      => "\\NormalTok",
+    :LBRACE      => "\\NormalTok",
+    :RBRACE      => "\\NormalTok",
+    :LSQUARE     => "\\NormalTok",
+    :RSQUARE     => "\\NormalTok",
+    :EQ          => "\\OperatorTok",
+    :PLUS        => "\\OperatorTok",
+    :MINUS       => "\\OperatorTok",
+    :STAR        => "\\OperatorTok",
+    :SLASH       => "\\OperatorTok",
+    :BSLASH      => "\\OperatorTok",
+    :CARET       => "\\OperatorTok",
+    :DOT         => "\\OperatorTok",
+    :DOTOP       => "\\OperatorTok",
+    :OP          => "\\OperatorTok",
+    :DECLARATION => "\\OperatorTok",
+    :IDENTIFIER  => "\\NormalTok",
+    :INTEGER     => "\\DecValTok",
+    :FLOAT       => "\\DecValTok",
+    :STRING      => "\\StringTok",
+    :CHAR        => "\\CharTok",
+    :NOT         => "\\OperatorTok",
+    :IN          => "\\KeywordTok",
+    :ISA         => "\\KeywordTok",
+    :WHERE       => "\\KeywordTok",
+    :OUTER       => "\\KeywordTok",
+    :GLOBAL      => "\\KeywordTok",
+    :LOCAL       => "\\KeywordTok",
+    :TRY         => "\\KeywordTok",
+    :CATCH       => "\\KeywordTok",
+    :FINALLY     => "\\KeywordTok",
+    :ENDMARKER   => "",
+)
+
+# Knitr/pandoc color scheme (RGB from generated Rmarkdown .tex)
+const HIGHLIGHTING_PREAMBLE = raw"""
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage{fancyvrb}
+\usepackage{framed}
+\definecolor{shadecolor}{RGB}{248,248,248}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+\newenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{0.94,0.16,0.16}{#1}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\BuiltInTok}[1]{#1}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{0.64,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\ImportTok}[1]{#1}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\VariableTok}[1]{#1}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+"""
+
+const MINTED_PREAMBLE = raw"""
+\usepackage{xcolor}
+\usepackage{minted}
+\definecolor{knitrbg}{rgb}{0.969, 0.969, 0.969}
+"""
+
 const MINTED_CODE_START = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\small, xleftmargin=0.5em, bgcolor=knitrbg]{julia}"
 const MINTED_CODE_END   = "\\end{minted}"
 const MINTED_TERM_START = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\footnotesize, xleftmargin=0.5em, bgcolor=knitrbg]{jlcon}"
 const MINTED_TERM_END   = "\\end{minted}"
-const MINTED_OUT_START  = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\small, xleftmargin=0.5em, frame = leftline]{text}"
-const MINTED_OUT_END    = "\\end{minted}"
 
 const DEFAULT_CHUNK_OPTIONS = Dict{Symbol,Any}(
     :echo      => true,
@@ -81,7 +196,6 @@ function Base.display(report::Report, data)
 end
 
 # _save_figure: generic MIME-based figure capture, bypasses display stack entirely
-# (no GUI windows ever opened — uses showable + add_figure directly)
 function _save_figure(report::Report, data)
     for mime_str in ["application/pdf", "image/png", "image/svg+xml"]
         if Base.invokelatest(showable, mime_str, data)
@@ -98,7 +212,6 @@ function _save_figure(report::Report, data)
 end
 
 # add_figure (from Weave.jl's display_methods.jl:118-133)
-# NOTE: uses invokelatest to avoid world-age issues with types loaded at runtime
 function add_figure(report::Report, data, m, ext)
     mkpath(joinpath(report.cwd, report.fig_path))
     full_name, rel_name = get_figname(report, ext = ext)
@@ -163,7 +276,109 @@ function parse_chunk_header(header_str::AbstractString)
     end
 end
 
-function knit(input_file::String; output_file::String = "")
+function detect_bib_engine(tex_content::String)::Union{Symbol, Nothing}
+    occursin(r"\\addbibresource\{", tex_content) && return :biber
+    (occursin(r"\\bibliography\{", tex_content) || occursin(r"\\bibliographystyle\{", tex_content)) && return :bibtex
+    return nothing
+end
+
+function compile_pdf(tex_file::String; engine::Symbol=:pdflatex, bib_engine::Union{Symbol,Nothing} = nothing)
+    tex_file = abspath(tex_file)
+    work_dir = dirname(tex_file)
+    base_name = first(splitext(basename(tex_file)))
+
+    tex_content = read(tex_file, String)
+    engine_detected = bib_engine !== nothing ? bib_engine : detect_bib_engine(tex_content)
+
+    function run_latex()
+        cmd = `$engine -interaction=nonstopmode -shell-escape $tex_file`
+        p = cd(() -> run(pipeline(cmd, devnull, devnull, stderr)), work_dir)
+        return success(p)
+    end
+
+    function run_bib()
+        if engine_detected === :bibtex
+            cmd = `bibtex $(base_name).aux`
+        elseif engine_detected === :biber
+            cmd = `biber $base_name`
+        else
+            return true
+        end
+        p = cd(() -> run(pipeline(cmd, devnull, devnull, stderr)), work_dir)
+        return success(p)
+    end
+
+    run_latex() || throw(ErrorException("$engine failed"))
+
+    if engine_detected !== nothing
+        run_bib() || @warn "BibTeX/Biber step failed, continuing without bibliography"
+    end
+
+    run_latex() || throw(ErrorException("$engine (2nd pass) failed"))
+    run_latex() || throw(ErrorException("$engine (3rd pass) failed"))
+
+    pdf_file = joinpath(work_dir, base_name * ".pdf")
+    println("Compiled PDF: $pdf_file")
+    return pdf_file
+end
+
+function escape_latex(s::String)::String
+    buf = IOBuffer()
+    for c in s
+        if c == '\\'
+            write(buf, "\\textbackslash{}")
+        elseif c == '{'
+            write(buf, "\\{")
+        elseif c == '}'
+            write(buf, "\\}")
+        elseif c == '$'
+            write(buf, raw"\$")
+        elseif c == '%'
+            write(buf, "\\%")
+        elseif c == '&'
+            write(buf, "\\&")
+        elseif c == '#'
+            write(buf, "\\#")
+        elseif c == '_'
+            write(buf, "\\_")
+        elseif c == '^'
+            write(buf, "{\\^{}}")
+        elseif c == '~'
+            write(buf, "\\textasciitilde{}")
+        else
+            write(buf, c)
+        end
+    end
+    return String(take!(buf))
+end
+
+function julia_to_latex(code::String)::String
+    tokens = collect(tokenize(code))
+    buf = IOBuffer()
+    write(buf, "\\begin{Shaded}\n\\begin{Highlighting}[]\n")
+    for t in tokens
+        t.kind === :ENDMARKER && continue
+        if t.val == ""
+            text = code[t.startbyte+1:t.endbyte+1]
+        else
+            text = t.val
+        end
+        # Always output whitespace directly (including newlines)
+        # Never wrap them in macros as it breaks Verbatim rendering
+        if t.kind === :WHITESPACE || text == "\n" || text == "\r\n" || text == "\r"
+            write(buf, text)
+        else
+            macro_name = get(TOKEN_MACROS, Symbol(t.kind), "\\NormalTok")
+            if !isempty(macro_name)
+                write(buf, macro_name, "{", escape_latex(text), "}")
+            end
+        end
+    end
+    write(buf, "\\end{Highlighting}\n\\end{Shaded}\n")
+    return String(take!(buf))
+end
+
+function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex, highlighting::Symbol = :tokens)
     if isempty(output_file)
         output_file = replace(input_file, r"\.jnw$" => ".tex")
     end
@@ -178,29 +393,41 @@ function knit(input_file::String; output_file::String = "")
 
     pushdisplay(report)
     try
-        processed = process_content(content, exec_module, report)
+        processed = process_content(content, exec_module, report; highlighting)
     finally
         popdisplay(report)
     end
 
-    # Inject LaTeX preamble packages if not already present
-    if !occursin(r"\\usepackage(\[.*?\])?\{minted\}", processed)
-        processed = replace(
-            processed,
-            r"\\begin\{document\}" =>
-                "\\usepackage{xcolor}\n\\usepackage{graphicx}\n\\usepackage{float}\n" *
-                "\\usepackage{minted}\n" *
-                "\\definecolor{knitrbg}{rgb}{0.969, 0.969, 0.969}\n\\begin{document}";
-            count = 1,
-        )
+    preamble = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
+    extra_pkgs = "\\usepackage{graphicx}\n\\usepackage{float}\n"
+
+    if !occursin(r"\\begin\{document\}", processed)
+        processed *= "\n"
     end
+
+    processed = replace(
+        processed,
+        r"\\begin\{document\}" => preamble * extra_pkgs * "\\begin{document}";
+        count = 1,
+    )
 
     write(output_file, processed)
     println("Knitted: $input_file → $output_file")
+
+    if compile
+        try
+            pdf_file = compile_pdf(output_file; engine)
+            return pdf_file
+        catch e
+            @warn "PDF compilation failed with $engine: $(sprint(showerror, e))"
+            return output_file
+        end
+    end
+
     return output_file
 end
 
-function process_content(content::String, exec_module::Module, report::Report)
+function process_content(content::String, exec_module::Module, report::Report; highlighting::Symbol = :tokens)
     chunk_pattern = r"<<(?<header>[^>]*)>>=\s*\n(?<code>.*?)\n@"s
 
     processed = content
@@ -226,7 +453,7 @@ function process_content(content::String, exec_module::Module, report::Report)
     end
 
     for (m, code, result, name, opts) in reverse(chunk_data)
-        latex_output = generate_chunk_latex(code, result, name, opts)
+        latex_output = generate_chunk_latex(code, result, name, opts; highlighting)
         processed =
             processed[1:m.offset-1] * latex_output * processed[m.offset+length(m.match):end]
     end
@@ -365,7 +592,7 @@ function render_figures(options::Dict{Symbol,Any}, figures::Vector{String})
     return result
 end
 
-function generate_chunk_latex(code::String, result, chunk_name, options::Dict{Symbol,Any})
+function generate_chunk_latex(code::String, result, chunk_name, options::Dict{Symbol,Any}; highlighting::Symbol = :tokens)
     latex = ""
 
     if options[:echo]
@@ -373,35 +600,36 @@ function generate_chunk_latex(code::String, result, chunk_name, options::Dict{Sy
             latex *= MINTED_TERM_START * "\n"
             latex *= code
             latex *= "\n" * MINTED_TERM_END * "\n"
-        else
+        elseif highlighting === :minted
             latex *= MINTED_CODE_START * "\n"
             latex *= code
             latex *= "\n" * MINTED_CODE_END * "\n"
+        else
+            latex *= julia_to_latex(code) * "\n"
         end
     end
 
     if options[:results] != "hide"
         if !isempty(result.output)
-            latex *= MINTED_OUT_START * "\n"
+            latex *= "\\begin{verbatim}\n"
             latex *= result.output
-            latex *= MINTED_OUT_END * "\n"
+            latex *= "\\end{verbatim}\n"
         end
 
         if !isnothing(result.result) && isempty(result.output) && isempty(result.figures)
-            latex *= MINTED_OUT_START * "\n"
+            latex *= "\\begin{verbatim}\n"
             latex *= Base.invokelatest(string, result.result)
-            latex *= "\n" * MINTED_OUT_END * "\n"
+            latex *= "\n\\end{verbatim}\n"
         end
 
         if !isempty(result.error)
             latex *= "\\textbf{Error:}\n"
-            latex *= MINTED_OUT_START * "\n"
+            latex *= "\\begin{verbatim}\n"
             latex *= result.error
-            latex *= "\n" * MINTED_OUT_END * "\n"
+            latex *= "\n\\end{verbatim}\n"
         end
     end
 
-    # Handle figures (from Weave.jl's common.jl:86-89)
     if options[:fig] && haskey(result, :figures) && length(result.figures) > 0
         latex *= render_figures(options, result.figures)
     end

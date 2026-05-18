@@ -1,6 +1,6 @@
 # Knit.jl
 
-A knitr-like processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with minted syntax highlighting.
+A knitr-like processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with syntax highlighting.
 
 ## Installation
 
@@ -30,10 +30,43 @@ Then knit it:
 
 ```julia
 using Knit
-Knit.knit("document.jnw")
+Knit.knit("document.jnw")  # produces document.pdf automatically
 ```
 
-Compile the resulting `.tex` with `pdflatex -shell-escape` (minted requires `-shell-escape`).
+To only generate the `.tex` file without compiling:
+
+```julia
+Knit.knit("document.jnw"; compile=false)
+```
+
+## Syntax Highlighting
+
+Knit.jl uses **token-based highlighting** by default (matching the knitr/pandoc color scheme), with no external dependencies. Code is tokenized at knit time and highlighted with LaTeX macros embedded directly in the `.tex` file.
+
+For richer highlighting (Pygments-based), use the `minted` engine:
+
+```julia
+Knit.knit("document.jnw"; highlighting=:minted)
+```
+
+This requires `pip install Pygments` and the `minted` LaTeX package.
+
+## PDF Compilation
+
+PDF compilation runs `pdflatex -shell-escape` automatically. If your document contains `\bibliography{}`, `\bibliographystyle{}`, or `\addbibresource{}`, the appropriate bibliography engine (bibtex or biber) is detected and run automatically.
+
+You can use different LaTeX engines:
+
+```julia
+Knit.knit("document.jnw"; engine=:lualatex)
+Knit.knit("document.jnw"; engine=:xelatex)
+```
+
+You can also compile an existing `.tex` file manually:
+
+```julia
+Knit.compile_pdf("document.tex")
+```
 
 ## Chunk Options
 
@@ -67,5 +100,6 @@ See the `examples/` directory for demo files:
 ## Requirements
 
 - Julia 1.6+
-- Pygments (for minted): `pip install Pygments`
-- A LaTeX distribution with `minted`, `xcolor`, `graphicx`, `float`
+- A LaTeX distribution with `pdflatex`, `xcolor`, `fancyvrb`, `framed`, `graphicx`, `float`
+- For minted highlighting: Pygments (`pip install Pygments`) + the `minted` LaTeX package
+- For bibliography: `bibtex` or `biber` (auto-detected from `.tex` content)

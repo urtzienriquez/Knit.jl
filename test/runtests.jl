@@ -60,3 +60,10 @@ end
         end
     end
 end
+
+@testset "detect_bib_engine" begin
+    @test Knit.detect_bib_engine("\\addbibresource{refs.bib}") === :biber
+    @test Knit.detect_bib_engine("\\bibliography{refs}") === :bibtex
+    @test Knit.detect_bib_engine("\\bibliographystyle{plain}") === :bibtex
+    @test Knit.detect_bib_engine("\\section{Hello}") === nothing
+end

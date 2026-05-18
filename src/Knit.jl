@@ -1,6 +1,52 @@
 module Knit
 
-export knit
+export knit, compile_pdf
+
+function detect_bib_engine(tex_content::String)::Union{Symbol, Nothing}
+    occursin(r"\\addbibresource\{", tex_content) && return :biber
+    (occursin(r"\\bibliography\{", tex_content) || occursin(r"\\bibliographystyle\{", tex_content)) && return :bibtex
+    return nothing
+end
+
+function compile_pdf(tex_file::String; engine::Symbol=:pdflatex, bib_engine::Union{Symbol,Nothing} = nothing)
+    tex_file = abspath(tex_file)
+    work_dir = dirname(tex_file)
+    base_name = first(splitext(basename(tex_file)))
+
+    tex_content = read(tex_file, String)
+    engine_detected = bib_engine !== nothing ? bib_engine : detect_bib_engine(tex_content)
+
+    function run_latex()
+        cmd = `$engine -interaction=nonstopmode -shell-escape $tex_file`
+        p = cd(() -> run(pipeline(cmd, devnull, devnull, stderr)), work_dir)
+        return success(p)
+    end
+
+    function run_bib()
+        if engine_detected === :bibtex
+            cmd = `bibtex $(base_name).aux`
+        elseif engine_detected === :biber
+            cmd = `biber $base_name`
+        else
+            return true
+        end
+        p = cd(() -> run(pipeline(cmd, devnull, devnull, stderr)), work_dir)
+        return success(p)
+    end
+
+    run_latex() || throw(ErrorException("$engine failed"))
+
+    if engine_detected !== nothing
+        run_bib() || @warn "BibTeX/Biber step failed, continuing without bibliography"
+    end
+
+    run_latex() || throw(ErrorException("$engine (2nd pass) failed"))
+    run_latex() || throw(ErrorException("$engine (3rd pass) failed"))
+
+    pdf_file = joinpath(work_dir, base_name * ".pdf")
+    println("Compiled PDF: $pdf_file")
+    return pdf_file
+end
 
 # Minted environment strings (from Weave.jl's LaTeXMinted)
 const MINTED_CODE_START = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\small, xleftmargin=0.5em, bgcolor=knitrbg]{julia}"
@@ -163,7 +209,7 @@ function parse_chunk_header(header_str::AbstractString)
     end
 end
 
-function knit(input_file::String; output_file::String = "")
+function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex)
     if isempty(output_file)
         output_file = replace(input_file, r"\.jnw$" => ".tex")
     end
@@ -197,6 +243,17 @@ function knit(input_file::String; output_file::String = "")
 
     write(output_file, processed)
     println("Knitted: $input_file → $output_file")
+
+    if compile
+        try
+            pdf_file = compile_pdf(output_file; engine)
+            return pdf_file
+        catch e
+            @warn "PDF compilation failed with $engine: $(e.msg)"
+            return output_file
+        end
+    end
+
     return output_file
 end
 

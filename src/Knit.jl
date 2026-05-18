@@ -70,8 +70,16 @@ const TOKEN_MACROS = Dict{Symbol,String}(
 
 # Knitr/pandoc color scheme (RGB from generated Rmarkdown .tex)
 const HIGHLIGHTING_PREAMBLE = raw"""
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp}
+\else
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
 \usepackage{lmodern}
 \usepackage{xcolor}
 \usepackage{fancyvrb}

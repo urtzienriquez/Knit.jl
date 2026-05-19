@@ -70,9 +70,6 @@ const TOKEN_MACROS = Dict{Symbol,String}(
 
 # Knitr/pandoc color scheme (RGB from generated Rmarkdown .tex)
 const HIGHLIGHTING_PREAMBLE = raw"""
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
-\usepackage{lmodern}
 \usepackage{xcolor}
 \usepackage{fancyvrb}
 \usepackage{framed}
@@ -119,6 +116,29 @@ const MINTED_PREAMBLE = raw"""
 \usepackage{minted}
 \definecolor{knitrbg}{rgb}{0.969, 0.969, 0.969}
 """
+
+# Preamble detection helpers — check if the user already defined something
+# before we try to insert it ourselves.
+function _has_package(doc::AbstractString, pkg::AbstractString)::Bool
+    occursin(Regex("\\\\usepackage(\\[.*?\\])?\\{$pkg\\}"), doc)
+end
+
+function _has_newcommand(doc::AbstractString, cmd::AbstractString)::Bool
+    pattern = "\\\\newcommand(\\*)?\\{" * escape_string(cmd) * "\\}"
+    occursin(Regex(pattern), doc)
+end
+
+function _has_newenvironment(doc::AbstractString, env::AbstractString)::Bool
+    occursin(Regex("\\\\newenvironment\\{$env\\}"), doc)
+end
+
+function _has_definecolor(doc::AbstractString, color::AbstractString)::Bool
+    occursin(Regex("\\\\definecolor\\{$color\\}"), doc)
+end
+
+function _has_defineverbatimenvironment(doc::AbstractString, env::AbstractString)::Bool
+    occursin(Regex("\\\\DefineVerbatimEnvironment\\{$env\\}"), doc)
+end
 
 const MINTED_CODE_START = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\small, xleftmargin=0.5em, bgcolor=knitrbg]{julia}"
 const MINTED_CODE_END   = "\\end{minted}"
@@ -378,6 +398,51 @@ function julia_to_latex(code::String)::String
     return String(take!(buf))
 end
 
+function _preamble_line_defined(doc::AbstractString, line::AbstractString)::Bool
+    if startswith(line, "\\usepackage")
+        m = match(r"\\usepackage(?:\[.*?\])?\{(.+?)\}", line)
+        return m !== nothing && _has_package(doc, m.captures[1])
+    elseif startswith(line, "\\newcommand")
+        m = match(r"\\newcommand\*?\{(.+?)\}", line)
+        return m !== nothing && _has_newcommand(doc, m.captures[1])
+    elseif startswith(line, "\\newenvironment")
+        m = match(r"\\newenvironment\{(.+?)\}", line)
+        return m !== nothing && _has_newenvironment(doc, m.captures[1])
+    elseif startswith(line, "\\definecolor")
+        m = match(r"\\definecolor\{(.+?)\}", line)
+        return m !== nothing && _has_definecolor(doc, m.captures[1])
+    elseif startswith(line, "\\DefineVerbatimEnvironment")
+        m = match(r"\\DefineVerbatimEnvironment\{(.+?)\}", line)
+        return m !== nothing && _has_defineverbatimenvironment(doc, m.captures[1])
+    end
+    return false
+end
+
+function _build_preamble(doc::AbstractString, highlighting::Symbol)::String
+    preamble_text = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
+    lines = split(strip(preamble_text), '\n')
+
+    needed = String[]
+    for line in lines
+        stripped = strip(line)
+        isempty(stripped) && continue
+        if !_preamble_line_defined(doc, stripped)
+            push!(needed, stripped)
+        end
+    end
+
+    if occursin(r"\\includegraphics", doc)
+        if !_has_package(doc, "graphicx")
+            push!(needed, "\\usepackage{graphicx}")
+        end
+        if !_has_package(doc, "float")
+            push!(needed, "\\usepackage{float}")
+        end
+    end
+
+    return join(needed, "\n")
+end
+
 function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex, highlighting::Symbol = :tokens)
     if isempty(output_file)
         output_file = replace(input_file, r"\.jnw$" => ".tex")
@@ -398,18 +463,19 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
         popdisplay(report)
     end
 
-    preamble = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
-    extra_pkgs = "\\usepackage{graphicx}\n\\usepackage{float}\n"
+    preamble = _build_preamble(processed, highlighting)
 
     if !occursin(r"\\begin\{document\}", processed)
         processed *= "\n"
     end
 
-    processed = replace(
-        processed,
-        r"\\begin\{document\}" => preamble * extra_pkgs * "\\begin{document}";
-        count = 1,
-    )
+    if !isempty(preamble)
+        processed = replace(
+            processed,
+            r"\\begin\{document\}" => preamble * "\n" * "\\begin{document}";
+            count = 1,
+        )
+    end
 
     write(output_file, processed)
     println("Knitted: $input_file → $output_file")

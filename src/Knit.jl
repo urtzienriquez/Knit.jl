@@ -302,7 +302,7 @@ function detect_bib_engine(tex_content::String)::Union{Symbol, Nothing}
     return nothing
 end
 
-function compile_pdf(tex_file::String; engine::Symbol=:pdflatex, bib_engine::Union{Symbol,Nothing} = nothing)
+function compile_pdf(tex_file::String; engine::Symbol=:pdflatex, bib_engine::Union{Symbol,Nothing} = nothing, quiet::Bool = false)
     tex_file = abspath(tex_file)
     work_dir = dirname(tex_file)
     base_name = first(splitext(basename(tex_file)))
@@ -310,7 +310,8 @@ function compile_pdf(tex_file::String; engine::Symbol=:pdflatex, bib_engine::Uni
     tex_content = read(tex_file, String)
     engine_detected = bib_engine !== nothing ? bib_engine : detect_bib_engine(tex_content)
 
-    function run_latex()
+    function run_latex(pass::Int)
+        quiet || println("[Knit]   $engine (pass $pass/3)...")
         cmd = `$engine -interaction=nonstopmode -shell-escape $tex_file`
         p = cd(() -> run(pipeline(cmd, devnull, devnull, stderr)), work_dir)
         return success(p)
@@ -324,21 +325,21 @@ function compile_pdf(tex_file::String; engine::Symbol=:pdflatex, bib_engine::Uni
         else
             return true
         end
+        quiet || println("[Knit]   $(engine_detected)...")
         p = cd(() -> run(pipeline(cmd, devnull, devnull, stderr)), work_dir)
         return success(p)
     end
 
-    run_latex() || throw(ErrorException("$engine failed"))
+    run_latex(1) || throw(ErrorException("$engine failed"))
 
     if engine_detected !== nothing
         run_bib() || @warn "BibTeX/Biber step failed, continuing without bibliography"
     end
 
-    run_latex() || throw(ErrorException("$engine (2nd pass) failed"))
-    run_latex() || throw(ErrorException("$engine (3rd pass) failed"))
+    run_latex(2) || throw(ErrorException("$engine (2nd pass) failed"))
+    run_latex(3) || throw(ErrorException("$engine (3rd pass) failed"))
 
     pdf_file = joinpath(work_dir, base_name * ".pdf")
-    println("Compiled PDF: $pdf_file")
     return pdf_file
 end
 
@@ -418,32 +419,59 @@ function _preamble_line_defined(doc::AbstractString, line::AbstractString)::Bool
     return false
 end
 
-function _build_preamble(doc::AbstractString, highlighting::Symbol)::String
+function _extract_name(line::AbstractString)::String
+    if startswith(line, "\\usepackage")
+        m = match(r"\\usepackage(?:\[.*?\])?\{(.+?)\}", line)
+        return m !== nothing ? m.captures[1] : line
+    elseif startswith(line, "\\newcommand") || startswith(line, "\\newcommand*")
+        m = match(r"\\newcommand\*?\{(.+?)\}", line)
+        return m !== nothing ? m.captures[1] : line
+    elseif startswith(line, "\\newenvironment")
+        m = match(r"\\newenvironment\{(.+?)\}", line)
+        return m !== nothing ? m.captures[1] : line
+    elseif startswith(line, "\\definecolor")
+        m = match(r"\\definecolor\{(.+?)\}", line)
+        return m !== nothing ? m.captures[1] : line
+    elseif startswith(line, "\\DefineVerbatimEnvironment")
+        m = match(r"\\DefineVerbatimEnvironment\{(.+?)\}", line)
+        return m !== nothing ? m.captures[1] : line
+    end
+    return line
+end
+
+function _build_preamble(doc::AbstractString, highlighting::Symbol)
     preamble_text = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
     lines = split(strip(preamble_text), '\n')
 
     needed = String[]
+    skipped = String[]
     for line in lines
         stripped = strip(line)
         isempty(stripped) && continue
         if !_preamble_line_defined(doc, stripped)
             push!(needed, stripped)
+        else
+            push!(skipped, _extract_name(stripped))
         end
     end
 
     if occursin(r"\\includegraphics", doc)
         if !_has_package(doc, "graphicx")
             push!(needed, "\\usepackage{graphicx}")
+        else
+            push!(skipped, "graphicx")
         end
         if !_has_package(doc, "float")
             push!(needed, "\\usepackage{float}")
+        else
+            push!(skipped, "float")
         end
     end
 
-    return join(needed, "\n")
+    return join(needed, "\n"), length(needed), skipped
 end
 
-function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex, highlighting::Symbol = :tokens)
+function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex, highlighting::Symbol = :tokens, quiet::Bool = false)
     if isempty(output_file)
         output_file = replace(input_file, r"\.jnw$" => ".tex")
     end
@@ -452,18 +480,24 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
     cwd = dirname(input_path)
     doc_basename = splitext(basename(input_path))[1]
 
+    quiet || println("[Knit] Input: $input_file")
+    quiet || println("[Knit] Output: $output_file")
+    quiet || println("[Knit] Engine: $engine")
+    quiet || println("[Knit] Highlight mode: $highlighting")
+    quiet || println("[Knit] Compile: $compile")
+
     content = read(input_file, String)
     exec_module = Module(:KnitExec)
     report = Report(cwd, doc_basename)
 
     pushdisplay(report)
     try
-        processed = process_content(content, exec_module, report; highlighting)
+        processed = process_content(content, exec_module, report; highlighting, quiet)
     finally
         popdisplay(report)
     end
 
-    preamble = _build_preamble(processed, highlighting)
+    preamble, n_ins, skipped = _build_preamble(processed, highlighting)
 
     if !occursin(r"\\begin\{document\}", processed)
         processed *= "\n"
@@ -477,12 +511,20 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
         )
     end
 
+    if !quiet
+        msg = "[Knit] Preamble: inserted $n_ins items"
+        if !isempty(skipped)
+            msg *= ", skipped $(length(skipped)) ($(join(skipped, ", "))) [already defined]"
+        end
+        println(msg)
+    end
+
     write(output_file, processed)
-    println("Knitted: $input_file → $output_file")
+    quiet || println("[Knit] TeX:    $output_file")
 
     if compile
         try
-            pdf_file = compile_pdf(output_file; engine)
+            pdf_file = compile_pdf(output_file; engine, quiet)
             return pdf_file
         catch e
             @warn "PDF compilation failed with $engine: $(sprint(showerror, e))"
@@ -493,18 +535,42 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
     return output_file
 end
 
-function process_content(content::String, exec_module::Module, report::Report; highlighting::Symbol = :tokens)
+function _warn_unknown_options(header_str::AbstractString, name)
+    s = strip(header_str)
+    isempty(s) && return
+    idx = findfirst(',', s)
+    options_str = if idx === nothing
+        occursin('=', s) ? s : ""
+    else
+        strip(s[idx+1:end])
+    end
+    isempty(options_str) && return
+    for m in eachmatch(r"(\w+)\s*=", options_str)
+        key = Symbol(m.captures[1])
+        if !haskey(DEFAULT_CHUNK_OPTIONS, key)
+            @warn "[Knit] Chunk '$(name)': unknown option '$key'"
+        end
+    end
+end
+
+function process_content(content::String, exec_module::Module, report::Report; highlighting::Symbol = :tokens, quiet::Bool = false)
     chunk_pattern = r"<<(?<header>[^>]*)>>=\s*\n(?<code>.*?)\n@"s
 
     processed = content
     chunks = collect(eachmatch(chunk_pattern, content))
+    total = length(chunks)
+
+    quiet || println("[Knit] Processing $total chunk(s)...")
 
     chunk_data = []
     for (i, m) in enumerate(chunks)
         header_str = String(m[:header])
         code = String(m[:code])
         name, chunk_opts = parse_chunk_header(header_str)
+        _warn_unknown_options(header_str, name !== nothing ? name : i)
         opts = merge(DEFAULT_CHUNK_OPTIONS, chunk_opts)
+
+        quiet || println("[Knit]   Chunk $i/$total: $(name !== nothing ? name : "(unnamed)")")
 
         if opts[:eval]
             report.cur_chunk = i
@@ -526,6 +592,7 @@ function process_content(content::String, exec_module::Module, report::Report; h
 
     inline_pattern = r"\\Sexpr\{([^}]+)\}"
     inline_matches = collect(eachmatch(inline_pattern, processed))
+    quiet || println("[Knit] Inline:  $(length(inline_matches)) expression(s)")
     inline_data = []
     for m in inline_matches
         code = String(m.captures[1])

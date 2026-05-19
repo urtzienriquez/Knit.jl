@@ -10,7 +10,7 @@
 
 \section{Introduction}
 
-This document demonstrates a simple knitr-like workflow for Julia.
+This document demonstrates a simple knit-like workflow for Julia.
 
 \section{Setup}
 

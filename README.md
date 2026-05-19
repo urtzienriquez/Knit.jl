@@ -1,6 +1,6 @@
 # Knit.jl
 
-A knitr-like processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with syntax highlighting.
+A literate programming processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with syntax highlighting.
 
 ## Installation
 
@@ -41,13 +41,21 @@ Knit.knit("document.jnw"; compile=false)
 
 ## Syntax Highlighting
 
-Knit.jl uses **token-based highlighting** by default (matching the knitr/pandoc color scheme), with no external dependencies. Code is tokenized at knit time and highlighted with LaTeX macros embedded directly in the `.tex` file.
+Knit.jl uses **token-based highlighting** by default (matching the pandoc color scheme), with no external dependencies. Code is tokenized at knit time and highlighted with LaTeX macros embedded directly in the `.tex` file.
 
 For richer highlighting (Pygments-based), use the `minted` engine:
 
 ```julia
 Knit.knit("document.jnw"; highlighting=:minted)
 ```
+
+You can also set a minted style:
+
+```julia
+Knit.knit("document.jnw"; highlighting=:minted, minted_style="monokai")
+```
+
+When a style is set, the default code block background (`knitbg`) is removed. Add `\definecolor{knitbg}{rgb}{...}{...}` in your `.jnw` preamble for a custom background.
 
 This requires `pip install Pygments` and the `minted` LaTeX package.
 

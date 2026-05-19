@@ -4,7 +4,7 @@ using Tokenize
 
 export knit, compile_pdf
 
-# Pandoc-style token macros (colors match knitr/pandoc defaults)
+# Pandoc-style token macros (colors match pandoc defaults)
 const TOKEN_MACROS = Dict{Symbol,String}(
     :COMMENT     => "\\CommentTok",
     :FUNCTION    => "\\FunctionTok",
@@ -114,36 +114,86 @@ const HIGHLIGHTING_PREAMBLE = raw"""
 const MINTED_PREAMBLE = raw"""
 \usepackage{xcolor}
 \usepackage{minted}
-\definecolor{knitrbg}{rgb}{0.969, 0.969, 0.969}
+\definecolor{knitbg}{rgb}{0.969, 0.969, 0.969}
 """
 
 # Preamble detection helpers — check if the user already defined something
 # before we try to insert it ourselves.
+
+# Strip LaTeX comments (everything from an unescaped % to end of line)
+# so that commented-out definitions are not mistaken for real ones.
+function _strip_latex_comments(doc::AbstractString)::String
+    buf = IOBuffer()
+    for line in split(doc, '\n')
+        i = 1
+        len = length(line)
+        while i <= len
+            if line[i] == '\\' && i < len
+                i += 2
+            elseif line[i] == '%'
+                break
+            else
+                i += 1
+            end
+        end
+        write(buf, SubString(line, 1, i - 1))
+        write(buf, '\n')
+    end
+    return String(take!(buf))
+end
+
+# Check that any \definecolor{...} is preceded by \usepackage{xcolor}
+# to avoid LaTeX errors when we insert xcolor after the user's definecolor.
+function _check_color_definition(doc::AbstractString)
+    m = match(r"^(.*?)\\begin\{document\}", doc)
+    preamble = m !== nothing ? m.captures[1] : doc
+    clean = _strip_latex_comments(preamble)
+
+    if occursin(r"\\definecolor\{", clean)
+        if !occursin(r"\\usepackage(\[.*?\])?\{xcolor\}", clean)
+            error("[Knit] You used \\definecolor{...} in your preamble " *
+                  "without loading the xcolor package.\n" *
+                  "       Add \\usepackage{xcolor} *before* \\definecolor{...} in your .jnw file.")
+        end
+    end
+end
+
 function _has_package(doc::AbstractString, pkg::AbstractString)::Bool
-    occursin(Regex("\\\\usepackage(\\[.*?\\])?\\{$pkg\\}"), doc)
+    occursin(Regex("\\\\usepackage(\\[.*?\\])?\\{$pkg\\}"), _strip_latex_comments(doc))
 end
 
 function _has_newcommand(doc::AbstractString, cmd::AbstractString)::Bool
     pattern = "\\\\newcommand(\\*)?\\{" * escape_string(cmd) * "\\}"
-    occursin(Regex(pattern), doc)
+    occursin(Regex(pattern), _strip_latex_comments(doc))
 end
 
 function _has_newenvironment(doc::AbstractString, env::AbstractString)::Bool
-    occursin(Regex("\\\\newenvironment\\{$env\\}"), doc)
+    occursin(Regex("\\\\newenvironment\\{$env\\}"), _strip_latex_comments(doc))
 end
 
 function _has_definecolor(doc::AbstractString, color::AbstractString)::Bool
-    occursin(Regex("\\\\definecolor\\{$color\\}"), doc)
+    occursin(Regex("\\\\definecolor\\{$color\\}"), _strip_latex_comments(doc))
 end
 
 function _has_defineverbatimenvironment(doc::AbstractString, env::AbstractString)::Bool
-    occursin(Regex("\\\\DefineVerbatimEnvironment\\{$env\\}"), doc)
+    occursin(Regex("\\\\DefineVerbatimEnvironment\\{$env\\}"), _strip_latex_comments(doc))
 end
 
-const MINTED_CODE_START = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\small, xleftmargin=0.5em, bgcolor=knitrbg]{julia}"
-const MINTED_CODE_END   = "\\end{minted}"
-const MINTED_TERM_START = "\\begin{minted}[texcomments = true, mathescape, fontsize=\\footnotesize, xleftmargin=0.5em, bgcolor=knitrbg]{jlcon}"
-const MINTED_TERM_END   = "\\end{minted}"
+function _has_usemintedstyle(doc::AbstractString)::Bool
+    occursin(r"\\usemintedstyle\{", _strip_latex_comments(doc))
+end
+
+const MINTED_CODE_END = "\\end{minted}"
+const MINTED_TERM_END = "\\end{minted}"
+
+function _minted_start(term::Bool, bg::Bool)::String
+    base = "texcomments = true, mathescape, fontsize="
+    base *= term ? "\\footnotesize" : "\\small"
+    base *= ", xleftmargin=0.5em"
+    bg && (base *= ", bgcolor=knitbg")
+    lexer = term ? "jlcon" : "julia"
+    return "\\begin{minted}[$base]{$lexer}"
+end
 
 const DEFAULT_CHUNK_OPTIONS = Dict{Symbol,Any}(
     :echo      => true,
@@ -439,7 +489,7 @@ function _extract_name(line::AbstractString)::String
     return line
 end
 
-function _build_preamble(doc::AbstractString, highlighting::Symbol)
+function _build_preamble(doc::AbstractString, highlighting::Symbol; minted_style::Union{Nothing,String} = nothing, minted_bg::Bool = true)
     preamble_text = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
     lines = split(strip(preamble_text), '\n')
 
@@ -448,11 +498,18 @@ function _build_preamble(doc::AbstractString, highlighting::Symbol)
     for line in lines
         stripped = strip(line)
         isempty(stripped) && continue
+        if highlighting === :minted && !minted_bg && startswith(stripped, "\\definecolor{knitbg}")
+            continue
+        end
         if !_preamble_line_defined(doc, stripped)
             push!(needed, stripped)
         else
             push!(skipped, _extract_name(stripped))
         end
+    end
+
+    if highlighting === :minted && minted_style !== nothing && !_has_usemintedstyle(doc)
+        push!(needed, "\\usemintedstyle{$minted_style}")
     end
 
     if occursin(r"\\includegraphics", doc)
@@ -471,7 +528,7 @@ function _build_preamble(doc::AbstractString, highlighting::Symbol)
     return join(needed, "\n"), length(needed), skipped
 end
 
-function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex, highlighting::Symbol = :tokens, quiet::Bool = false)
+function knit(input_file::String; output_file::String = "", compile::Bool = true, engine::Symbol = :pdflatex, highlighting::Symbol = :tokens, minted_style::Union{Nothing,String} = nothing, quiet::Bool = false)
     if isempty(output_file)
         output_file = replace(input_file, r"\.jnw$" => ".tex")
     end
@@ -480,24 +537,31 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
     cwd = dirname(input_path)
     doc_basename = splitext(basename(input_path))[1]
 
+    content = read(input_file, String)
+    _check_color_definition(content)
+
     quiet || println("[Knit] Input: $input_file")
     quiet || println("[Knit] Output: $output_file")
     quiet || println("[Knit] Engine: $engine")
     quiet || println("[Knit] Highlight mode: $highlighting")
+    if minted_style !== nothing
+        quiet || println("[Knit] Minted style: $minted_style")
+    end
     quiet || println("[Knit] Compile: $compile")
+    has_user_bg = _has_definecolor(content, "knitbg")
+    minted_bg = (minted_style === nothing) || has_user_bg
 
-    content = read(input_file, String)
     exec_module = Module(:KnitExec)
     report = Report(cwd, doc_basename)
 
     pushdisplay(report)
     try
-        processed = process_content(content, exec_module, report; highlighting, quiet)
+        processed = process_content(content, exec_module, report; highlighting, quiet, minted_bg)
     finally
         popdisplay(report)
     end
 
-    preamble, n_ins, skipped = _build_preamble(processed, highlighting)
+    preamble, n_ins, skipped = _build_preamble(processed, highlighting; minted_style, minted_bg)
 
     if !occursin(r"\\begin\{document\}", processed)
         processed *= "\n"
@@ -517,6 +581,11 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
             msg *= ", skipped $(length(skipped)) ($(join(skipped, ", "))) [already defined]"
         end
         println(msg)
+    end
+
+    if !quiet && minted_style !== nothing && !has_user_bg
+        println("[Knit] Note: background removed for minted style '$minted_style'. " *
+                "Define \\definecolor{knitbg}{rgb}{...}{...} in your .jnw preamble for a custom code block background.")
     end
 
     write(output_file, processed)
@@ -553,7 +622,7 @@ function _warn_unknown_options(header_str::AbstractString, name)
     end
 end
 
-function process_content(content::String, exec_module::Module, report::Report; highlighting::Symbol = :tokens, quiet::Bool = false)
+function process_content(content::String, exec_module::Module, report::Report; highlighting::Symbol = :tokens, quiet::Bool = false, minted_bg::Bool = true)
     chunk_pattern = r"<<(?<header>[^>]*)>>=\s*\n(?<code>.*?)\n@"s
 
     processed = content
@@ -585,7 +654,7 @@ function process_content(content::String, exec_module::Module, report::Report; h
     end
 
     for (m, code, result, name, opts) in reverse(chunk_data)
-        latex_output = generate_chunk_latex(code, result, name, opts; highlighting)
+        latex_output = generate_chunk_latex(code, result, name, opts; highlighting, minted_bg)
         processed =
             processed[1:m.offset-1] * latex_output * processed[m.offset+length(m.match):end]
     end
@@ -725,16 +794,16 @@ function render_figures(options::Dict{Symbol,Any}, figures::Vector{String})
     return result
 end
 
-function generate_chunk_latex(code::String, result, chunk_name, options::Dict{Symbol,Any}; highlighting::Symbol = :tokens)
+function generate_chunk_latex(code::String, result, chunk_name, options::Dict{Symbol,Any}; highlighting::Symbol = :tokens, minted_bg::Bool = true)
     latex = ""
 
     if options[:echo]
         if options[:term]
-            latex *= MINTED_TERM_START * "\n"
+            latex *= _minted_start(true, minted_bg) * "\n"
             latex *= code
             latex *= "\n" * MINTED_TERM_END * "\n"
         elseif highlighting === :minted
-            latex *= MINTED_CODE_START * "\n"
+            latex *= _minted_start(false, minted_bg) * "\n"
             latex *= code
             latex *= "\n" * MINTED_CODE_END * "\n"
         else

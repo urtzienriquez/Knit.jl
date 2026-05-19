@@ -2,6 +2,7 @@ module Knit
 using Tokenize
 export knit, compile_pdf
 
+include("output.jl")
 include("highlighting.jl")
 include("preamble.jl")
 include("options.jl")

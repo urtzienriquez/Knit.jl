@@ -5,7 +5,7 @@ function process_content(content::String, exec_module::Module, report::Report; h
     chunks = collect(eachmatch(chunk_pattern, content))
     total = length(chunks)
 
-    quiet || println("[Knit] Processing $total chunk(s)...")
+    vprintln_header(quiet, "Processing $total chunk(s)...")
 
     chunk_data = []
     for (i, m) in enumerate(chunks)
@@ -15,7 +15,7 @@ function process_content(content::String, exec_module::Module, report::Report; h
         _warn_unknown_options(header_str, name !== nothing ? name : i)
         opts = merge(DEFAULT_CHUNK_OPTIONS, chunk_opts)
 
-        quiet || println("[Knit]   Chunk $i/$total: $(name !== nothing ? name : "(unnamed)")")
+        vprintln_progress(quiet, "Chunk $i/$total: $(name !== nothing ? name : "(unnamed)")")
 
         if opts[:eval]
             report.cur_chunk = i
@@ -37,7 +37,7 @@ function process_content(content::String, exec_module::Module, report::Report; h
 
     inline_pattern = r"\\Sexpr\{([^}]+)\}"
     inline_matches = collect(eachmatch(inline_pattern, processed))
-    quiet || println("[Knit] Inline:  $(length(inline_matches)) expression(s)")
+    vprintln_header(quiet, "Inline:  $(length(inline_matches)) expression(s)")
     inline_data = []
     for m in inline_matches
         code = String(m.captures[1])

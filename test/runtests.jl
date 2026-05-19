@@ -529,6 +529,109 @@ end
     @test Knit.detect_bib_engine("") === nothing
 end
 
+@testset "_parse_latex_log" begin
+    # Empty/missing log
+    s = Knit._parse_latex_log("/tmp/nonexistent_xxxx.log")
+    @test isempty(s.errors)
+    @test isempty(s.warnings)
+
+    mktempdir() do dir
+        log_path = joinpath(dir, "test.log")
+
+        # Clean log with no issues
+        write(log_path, "This is pdfTeX...\nOutput written on test.pdf.\n")
+        s = Knit._parse_latex_log(log_path)
+        @test isempty(s.errors)
+        @test isempty(s.warnings)
+        @test isempty(s.badboxes)
+
+        # Log with errors
+        write(log_path, raw"""
+        ! LaTeX Error: File `missing.sty' not found.
+
+        Type X to quit or <RETURN> to proceed,
+        or enter new name. (Default extension: sty)
+
+        Enter file name:
+        ! Emergency stop.
+        <read *>
+
+        l.3 \usepackage{missing}
+
+
+        ! Undefined control sequence.
+        l.12 \foobar
+
+        """)
+        s = Knit._parse_latex_log(log_path)
+        @test length(s.errors) == 3
+        @test occursin("missing.sty", s.errors[1])
+        @test occursin("Emergency stop", s.errors[2])
+        @test occursin("Undefined control sequence", s.errors[3])
+        @test occursin("l.3", s.errors[2])
+        @test occursin("l.12", s.errors[3])
+
+        # Log with warnings
+        write(log_path, raw"""
+        LaTeX Warning: Citation `foo' on page 1 undefined on input line 10.
+
+        LaTeX Warning: There were undefined references.
+
+        Package hyperref Warning: Option `pdfauthor' has already been used,
+        (hyperref)                setting ignored on input line 15.
+
+        Overfull \hbox (12.345pt too wide) in paragraph at lines 20--21
+        """)
+        s = Knit._parse_latex_log(log_path)
+        @test isempty(s.errors)
+        @test length(s.warnings) == 3
+        @test occursin("Citation `foo'", s.warnings[1])
+        @test occursin("hyperref Warning", s.warnings[3])
+        @test occursin("(hyperref)", s.warnings[3])
+        @test length(s.badboxes) == 1
+        @test occursin("Overfull \\hbox", s.badboxes[1])
+        @test length(s.undefined_citations) == 1
+        @test occursin("Citation", s.undefined_citations[1])
+    end
+end
+
+@testset "_parse_bib_log" begin
+    mktempdir() do dir
+        # BibTeX log
+        blg_path = joinpath(dir, "test.blg")
+        write(blg_path, raw"""
+        This is BibTeX, Version 0.99d
+        The top-level auxiliary file: test.aux
+        Warning--I didn't find a database entry for "foo"
+        Warning--I didn't find a database entry for "bar"
+        (There were 2 warnings)
+        """)
+        issues = Knit._parse_bib_log(blg_path)
+        @test length(issues) == 2
+        @test occursin("foo", issues[1])
+
+        # Biber log
+        write(blg_path, raw"""
+        [0] INFO - This is Biber 2.20
+        [WARN] - Entry 'foo' not in database
+        """)
+        issues = Knit._parse_bib_log(blg_path)
+        @test length(issues) == 1
+
+        # Missing log file
+        issues = Knit._parse_bib_log("/tmp/nonexistent.blg")
+        @test isempty(issues)
+    end
+end
+
+@testset "_shorten_error" begin
+    @test Knit._shorten_error("! LaTeX Error: File `x' not found.\n\nl.3 \\usepackage{x}") ==
+           "! LaTeX Error: File `x' not found. (l.3 \\usepackage{x})"
+    @test Knit._shorten_error("! Undefined control sequence.\nl.12 \\foobar\n") ==
+           "! Undefined control sequence. (l.12 \\foobar)"
+    @test Knit._shorten_error("! Some error") == "! Some error"
+end
+
 # ──────────────────────────────────────────────────────────────────────
 # knit.jl (compile=false, so no pdflatex needed)
 # ──────────────────────────────────────────────────────────────────────

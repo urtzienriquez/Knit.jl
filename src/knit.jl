@@ -10,14 +10,14 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
     content = read(input_file, String)
     _check_color_definition(content)
 
-    quiet || println("[Knit] Input: $input_file")
-    quiet || println("[Knit] Output: $output_file")
-    quiet || println("[Knit] Engine: $engine")
-    quiet || println("[Knit] Highlight mode: $highlighting")
+    vprintln_header(quiet, "Input: $input_file")
+    vprintln_info(quiet, "Output: $output_file")
+    vprintln_info(quiet, "Engine: $engine")
+    vprintln_info(quiet, "Highlight mode: $highlighting")
     if minted_style !== nothing
-        quiet || println("[Knit] Minted style: $minted_style")
+        vprintln_info(quiet, "Minted style: $minted_style")
     end
-    quiet || println("[Knit] Compile: $compile")
+    vprintln_info(quiet, "Compile: $compile")
     has_user_bg = _has_definecolor(content, "knitbg")
     minted_bg = (minted_style === nothing) || has_user_bg
 
@@ -46,27 +46,27 @@ function knit(input_file::String; output_file::String = "", compile::Bool = true
     end
 
     if !quiet
-        msg = "[Knit] Preamble: inserted $n_ins items"
+        msg = "Preamble: inserted $n_ins items"
         if !isempty(skipped)
             msg *= ", skipped $(length(skipped)) ($(join(skipped, ", "))) [already defined]"
         end
-        println(msg)
+        vprintln_header(quiet, msg)
     end
 
     if !quiet && minted_style !== nothing && !has_user_bg
-        println("[Knit] Note: background removed for minted style '$minted_style'. " *
-                "Define \\definecolor{knitbg}{rgb}{...}{...} in your .jnw preamble for a custom code block background.")
+        vprintln_note(quiet, "background removed for minted style '$minted_style'. " *
+                      "Define \\definecolor{knitbg}{rgb}{...}{...} in your .jnw preamble for a custom code block background.")
     end
 
     write(output_file, processed)
-    quiet || println("[Knit] TeX:    $output_file")
+    vprintln_header(quiet, "TeX:    $output_file")
 
     if compile
         try
             pdf_file = compile_pdf(output_file; engine, quiet)
             return pdf_file
         catch e
-            @warn "PDF compilation failed with $engine: $(sprint(showerror, e))"
+            warn_knit("PDF compilation failed with $engine: $(sprint(showerror, e))")
             return output_file
         end
     end

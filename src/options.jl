@@ -71,7 +71,7 @@ function _warn_unknown_options(header_str::AbstractString, name)
     for m in eachmatch(r"(\w+)\s*=", options_str)
         key = Symbol(m.captures[1])
         if !haskey(DEFAULT_CHUNK_OPTIONS, key)
-            @warn "[Knit] Chunk '$(name)': unknown option '$key'"
+            warn_knit("Chunk '$(name)': unknown option '$key'")
         end
     end
 end

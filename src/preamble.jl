@@ -73,7 +73,7 @@ function _check_color_definition(doc::AbstractString)
 
     if occursin(r"\\definecolor\{", clean)
         if !occursin(r"\\usepackage(\[.*?\])?\{xcolor\}", clean)
-            error("[Knit] You used \\definecolor{...} in your preamble " *
+            error_knit("You used \\definecolor{...} in your preamble " *
                   "without loading the xcolor package.\n" *
                   "       Add \\usepackage{xcolor} *before* \\definecolor{...} in your .jnw file.")
         end

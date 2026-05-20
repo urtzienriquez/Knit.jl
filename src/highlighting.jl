@@ -124,6 +124,6 @@ function julia_to_latex(code::String)::String
             end
         end
     end
-    write(buf, "\\end{Highlighting}\n\\end{Shaded}\n")
+    write(buf, "\n\\end{Highlighting}\n\\end{Shaded}\n")
     return String(take!(buf))
 end

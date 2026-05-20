@@ -4,8 +4,9 @@ const DEFAULT_CHUNK_OPTIONS = Dict{Symbol,Any}(
     :results   => "markup",
     :term      => false,
     :hold      => false,
-    :cache     => false,
+    :cache     => 0,
     :fig       => true,
+    :fig_dev   => "pdf",
     :fig_cap   => nothing,
     :fig_width => 6,
     :fig_height => 4,
@@ -13,16 +14,106 @@ const DEFAULT_CHUNK_OPTIONS = Dict{Symbol,Any}(
     :fig_ext   => nothing,
     :fig_pos   => nothing,
     :fig_env   => nothing,
+    :fig_align => "default",
     :out_width => "\\linewidth",
     :out_height => nothing,
     :label     => nothing,
+    :include   => true,
+    :child     => nothing,
+    :warning   => true,
+    :message   => true,
+    :error     => true,
+    :comment   => "##",
 )
+
+const KNIT_OPTS = Dict{Symbol,Any}(
+    :engine        => :pdflatex,
+    :progress      => true,
+    :root_dir      => nothing,
+    :unnamed_chunk_label => "unnamed-chunk",
+    :minted_style  => nothing,
+    :resolve_input => true,
+    :normalize_paths => true,
+    :cache_path    => "cache/",
+    :warning       => true,
+    :message       => true,
+    :error         => true,
+)
+
+const _chunk_defaults = copy(DEFAULT_CHUNK_OPTIONS)
+
+function set_knit_option(key::Symbol, value)
+    if !haskey(KNIT_OPTS, key)
+        error_knit("Unknown knit option '$key'")
+    end
+    KNIT_OPTS[key] = value
+end
+
+function get_knit_option(key::Symbol)
+    if !haskey(KNIT_OPTS, key)
+        error_knit("Unknown knit option '$key'")
+    end
+    KNIT_OPTS[key]
+end
+
+function reset_knit_options()
+    KNIT_OPTS[:engine] = :pdflatex
+    KNIT_OPTS[:progress] = true
+    KNIT_OPTS[:root_dir] = nothing
+    KNIT_OPTS[:unnamed_chunk_label] = "unnamed-chunk"
+    KNIT_OPTS[:minted_style] = nothing
+    KNIT_OPTS[:resolve_input] = true
+    KNIT_OPTS[:normalize_paths] = true
+    KNIT_OPTS[:cache_path] = "cache/"
+    KNIT_OPTS[:warning] = true
+    KNIT_OPTS[:message] = true
+    KNIT_OPTS[:error] = true
+end
+
+function set_chunk_default(key::Symbol, value)
+    if !haskey(DEFAULT_CHUNK_OPTIONS, key)
+        error_knit("Unknown chunk option '$key'")
+    end
+    _chunk_defaults[key] = value
+end
+
+function get_chunk_default(key::Symbol)
+    if !haskey(_chunk_defaults, key)
+        error_knit("Unknown chunk option '$key'")
+    end
+    _chunk_defaults[key]
+end
+
+function reset_chunk_defaults()
+    for (k, v) in DEFAULT_CHUNK_OPTIONS
+        _chunk_defaults[k] = v
+    end
+end
+
+function merge_chunk_options(header_opts::Dict{Symbol,Any})
+    merged = copy(_chunk_defaults)
+    for (k, v) in header_opts
+        merged[k] = v
+    end
+    # Apply global warning/message/error if not explicitly set in header
+    if !haskey(header_opts, :warning)
+        merged[:warning] = KNIT_OPTS[:warning]
+    end
+    if !haskey(header_opts, :message)
+        merged[:message] = KNIT_OPTS[:message]
+    end
+    if !haskey(header_opts, :error)
+        merged[:error] = KNIT_OPTS[:error]
+    end
+    return merged
+end
 
 is_valid_kv(x) = Meta.isexpr(x, :(=))
 
 function parse_options(str::AbstractString)::Dict{Symbol,Any}
     isempty(str) && return Dict{Symbol,Any}()
     str = string('(', str, ')')
+    str = replace(str, r"'([^']*)'" => s"\"\1\"")
     ex = Meta.parse(str)
     try
         nt = if Meta.isexpr(ex, (:block, :tuple))
@@ -45,17 +136,24 @@ function parse_chunk_header(header_str::AbstractString)
     idx = findfirst(',', s)
     if idx === nothing
         if occursin('=', s)
-            return nothing, parse_options(s)
+            name, opts = nothing, parse_options(s)
         else
-            return s, Dict{Symbol,Any}()
+            name, opts = s, Dict{Symbol,Any}()
         end
     else
         name = strip(s[1:idx-1])
         rest = strip(s[idx+1:end])
         name = isempty(name) ? nothing : name
         opts = parse_options(rest)
-        return name, opts
     end
+
+    if name !== nothing && endswith(name, ';')
+        name = name[1:end-1]
+        name = isempty(name) ? nothing : name
+        opts[:results] = "hide"
+    end
+
+    return name, opts
 end
 
 function _warn_unknown_options(header_str::AbstractString, name)

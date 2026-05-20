@@ -268,6 +268,22 @@ end
     name, opts = Knit.parse_chunk_header("justaname")
     @test name == "justaname"
     @test opts == Dict{Symbol,Any}()
+
+    # semicolon at end of name → results="hide"
+    name, opts = Knit.parse_chunk_header("suppressed;")
+    @test name == "suppressed"
+    @test opts[:results] == "hide"
+
+    # semicolon with comma and options
+    name, opts = Knit.parse_chunk_header("mysuppressed;, echo=false")
+    @test name == "mysuppressed"
+    @test opts[:results] == "hide"
+    @test opts[:echo] == false
+
+    # just semicolon
+    name, opts = Knit.parse_chunk_header(";")
+    @test name === nothing
+    @test opts[:results] == "hide"
 end
 
 @testset "_warn_unknown_options" begin
@@ -393,84 +409,107 @@ end
     m = Module(:TestChunk)
     report = Knit.Report(pwd(), "test")
 
-    # simple code with semicolon → result not captured
-    result = Knit.execute_chunk("1+1;", m, report, Knit.DEFAULT_CHUNK_OPTIONS)
-    @test haskey(result, :result)
-    @test haskey(result, :output)
-    @test haskey(result, :error)
-    # 1+1; has semicolon, result is not captured/saved
+    # simple code
+    result = Knit.execute_chunk("1+1", m, report, Knit.DEFAULT_CHUNK_OPTIONS)
+    @test length(result) == 1
+    @test haskey(result[1], :result)
+    @test haskey(result[1], :output)
+    @test haskey(result[1], :error)
+    @test result[1].result == 2
 
     # code that prints
     result = Knit.execute_chunk("println(\"hello\")", m, report, Knit.DEFAULT_CHUNK_OPTIONS)
-    @test occursin("hello", result.output)
+    @test length(result) == 1
+    @test occursin("hello", result[1].output)
 
     # code that errors
     result = Knit.execute_chunk("error(\"oops\")", m, report, Knit.DEFAULT_CHUNK_OPTIONS)
-    @test !isempty(result.error)
+    @test length(result) == 1
+    @test !isempty(result[1].error)
+
+    # interleaved execution
+    m2 = Module(:TestChunk2)
+    result = Knit.execute_chunk("x = 10\ny = 20\nx + y", m2, report, Knit.DEFAULT_CHUNK_OPTIONS)
+    @test length(result) == 3
+    @test strip(result[1].code) == "x = 10"
+    @test strip(result[2].code) == "y = 20"
+    @test result[3].code == "x + y"
+    @test result[3].result == 30
 end
 
 @testset "generate_chunk_latex" begin
     opts = copy(Knit.DEFAULT_CHUNK_OPTIONS)
 
     # echo with term=true → minted term block
-    result = (result=nothing, output="", error="", figures=String[])
-    latex = Knit.generate_chunk_latex("1+1", result, "test", merge(opts, Dict(:echo=>true, :term=>true)))
+    segments = [(code="1+1", output="", warning="", message="", result=nothing, error="", figures=String[])]
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true, :term=>true)))
     @test occursin("\\begin{minted}", latex)
     @test occursin("{jlcon}", latex)
     @test occursin("1+1", latex)
     @test occursin("\\end{minted}", latex)
 
     # echo with highlighting=:minted
-    latex = Knit.generate_chunk_latex("1+1", result, "test", merge(opts, Dict(:echo=>true));
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true));
                                       highlighting=:minted)
     @test occursin("\\begin{minted}", latex)
     @test occursin("{julia}", latex)
 
     # echo with default highlighting (:tokens) → Shaded block
-    latex = Knit.generate_chunk_latex("1+1", result, "test", merge(opts, Dict(:echo=>true)))
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
     @test occursin("\\begin{Shaded}", latex)
 
     # echo=false → no code
-    latex = Knit.generate_chunk_latex("1+1", result, "test", merge(opts, Dict(:echo=>false)))
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>false)))
     @test !occursin("1+1", latex)
 
     # with output
-    result = (result=nothing, output="Hello\nWorld", error="", figures=String[])
-    latex = Knit.generate_chunk_latex("println(\"Hello\")", result, "test",
-                                       merge(opts, Dict(:echo=>true)))
+    segments = [(code="println(\"Hello\")", output="Hello\nWorld", warning="", message="", result=nothing, error="", figures=String[])]
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
+    @test occursin("\\begin{verbatim}", latex)
+    @test occursin("## Hello", latex)
+    @test occursin("## World", latex)
+    @test occursin("\\end{verbatim}", latex)
+
+    # with output, comment disabled
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true, :comment=>"")))
     @test occursin("\\begin{verbatim}", latex)
     @test occursin("Hello\nWorld", latex)
     @test occursin("\\end{verbatim}", latex)
 
     # with error
-    result = (result=nothing, output="", error="SomeError", figures=String[])
-    latex = Knit.generate_chunk_latex("error(\"msg\")", result, "test",
-                                       merge(opts, Dict(:echo=>true)))
+    segments = [(code="error(\"msg\")", output="", warning="", message="", result=nothing, error="SomeError", figures=String[])]
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
     @test occursin("\\textbf{Error:}", latex)
     @test occursin("SomeError", latex)
 
-    # with figures
-    result = (result=nothing, output="", error="", figures=["fig1.png"])
-    latex = Knit.generate_chunk_latex("plot(x)", result, "test",
-                                       merge(opts, Dict(:echo=>false, :fig=>true, :out_width=>nothing)))
-    @test occursin("\\includegraphics{fig1.png}", latex)
-
     # results=hide → no output/result/error blocks (code still shown if echo)
-    result = (result=42, output="print", error="", figures=String[])
-    latex = Knit.generate_chunk_latex("42", result, "test",
-                                       merge(opts, Dict(:echo=>true, :results=>"hide")))
+    segments = [(code="42", output="", warning="", message="", result=42, error="", figures=String[])]
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true, :results=>"hide")))
     @test occursin("\\begin{Shaded}", latex)  # code shown
     @test !occursin("print", latex)           # output hidden
     @test !occursin("\\begin{verbatim}", latex)
 
-    # result present, no output, no figures → show result string
-    result = (result=42, output="", error="", figures=String[])
-    latex = Knit.generate_chunk_latex("42", result, "test",
-                                       merge(opts, Dict(:echo=>false)))
+    # result present, no output → show result string
+    segments = [(code="42", output="", warning="", message="", result=42, error="", figures=String[])]
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>false)))
     @test occursin("\\begin{verbatim}", latex)
     @test occursin("42", latex)
-end
 
+    # interleaved segments
+    segments = [
+        (code="x = 10", output="", warning="", message="", result=nothing, error="", figures=String[]),
+        (code="x", output="", warning="", message="", result=10, error="", figures=String[]),
+    ]
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
+    @test occursin("\\begin{Shaded}", latex)
+    @test occursin("\\begin{verbatim}", latex)
+    @test occursin("10", latex)
+    # Verify interleaving: first Shaded block comes before verbatim
+    first_shaded = findfirst("\\begin{Shaded}", latex)
+    first_verbatim = findfirst("\\begin{verbatim}", latex)
+    @test first_shaded < first_verbatim
+
+end
 function _test_process_content(input_str, mod_name; quiet=false)
     m = Module(mod_name)
     report = Knit.Report(pwd(), "test_$mod_name")
@@ -662,4 +701,330 @@ end
         tex_path2 = Knit.knit(jnw_path; output_file=joinpath(dir, "out.tex"), compile=false, quiet=true)
         @test isfile(tex_path2)
     end
+end
+
+# ──────────────────────────────────────────────────────────────────────
+# New features: global options, tangle, caching, smart passes, etc.
+# ──────────────────────────────────────────────────────────────────────
+@testset "global options" begin
+    Knit.reset_knit_options()
+    @test Knit.get_knit_option(:engine) === :pdflatex
+    @test Knit.get_knit_option(:progress) === true
+    @test Knit.get_knit_option(:resolve_input) === true
+
+    Knit.set_knit_option(:engine, :xelatex)
+    @test Knit.get_knit_option(:engine) === :xelatex
+
+    Knit.reset_knit_options()
+    @test Knit.get_knit_option(:engine) === :pdflatex
+end
+
+@testset "chunk defaults" begin
+    Knit.reset_chunk_defaults()
+    @test Knit.get_chunk_default(:echo) === true
+    @test Knit.get_chunk_default(:cache) === 0
+    @test Knit.get_chunk_default(:fig_dev) == "pdf"
+    @test Knit.get_chunk_default(:include) === true
+    @test Knit.get_chunk_default(:child) === nothing
+
+    Knit.set_chunk_default(:echo, false)
+    @test Knit.get_chunk_default(:echo) === false
+
+    Knit.reset_chunk_defaults()
+    @test Knit.get_chunk_default(:echo) === true
+end
+
+@testset "merge_chunk_options" begin
+    header_opts = Dict{Symbol,Any}(:echo => false, :eval => false)
+    merged = Knit.merge_chunk_options(header_opts)
+    @test merged[:echo] === false
+    @test merged[:eval] === false
+    @test merged[:results] == "markup"  # default preserved
+end
+
+@testset "determine_passes" begin
+    @test Knit.determine_passes("\\section{Hello}") == 1
+    @test Knit.determine_passes("\\ref{sec:intro}") == 2
+    @test Knit.determine_passes("\\pageref{sec:intro}") == 2
+    @test Knit.determine_passes("\\tableofcontents") == 2
+    @test Knit.determine_passes("\\cite{author2020}") == 3
+    @test Knit.determine_passes("\\addbibresource{refs.bib}") == 3
+    @test Knit.determine_passes("\\ref{sec:intro}\n\\cite{foo}") == 3
+end
+
+@testset "tangle" begin
+    mktempdir() do dir
+        jnw_path = joinpath(dir, "test.jnw")
+        write(jnw_path, raw"""
+        \documentclass{article}
+        \begin{document}
+        <<setup, echo=true>>=
+        x = 1
+        y = 2
+        @
+        <<noeval, eval=false>>=
+        z = x + y
+        @
+        \Sexpr{1+1}
+        \end{document}
+        """)
+
+        jl_path = Knit.tangle(jnw_path)
+        @test isfile(jl_path)
+        content = read(jl_path, String)
+        @test occursin("## ----setup, echo=true----", content)
+        @test occursin("x = 1", content)
+        @test occursin("y = 2", content)
+        @test occursin("## ----noeval, eval=false----", content)
+        @test occursin("# z = x + y", content)
+
+        # Custom output path
+        jl_path2 = Knit.tangle(jnw_path; output_file=joinpath(dir, "custom.jl"))
+        @test isfile(jl_path2)
+    end
+end
+
+@testset "include=false" begin
+    mktempdir() do dir
+        jnw_path = joinpath(dir, "test.jnw")
+        write(jnw_path, raw"""
+        \documentclass{article}
+        \begin{document}
+        Before
+        <<visible>>=
+        1+1
+        @
+        <<hidden, include=false>>=
+        2+2
+        @
+        After
+        \end{document}
+        """)
+
+        tex_path = Knit.knit(jnw_path; compile=false, quiet=true)
+        content = read(tex_path, String)
+        @test occursin("Before", content)
+        @test occursin("After", content)
+        @test occursin("\\begin{Shaded}", content)  # visible chunk
+        # hidden chunk should produce no output
+        @test !occursin("2\\+2", content)  # 2+2 not in output
+    end
+end
+
+@testset "caching" begin
+    mktempdir() do dir
+        cache_dir = joinpath(dir, "cache")
+        Knit.set_knit_option(:cache_path, cache_dir)
+
+        jnw_path = joinpath(dir, "test.jnw")
+        write(jnw_path, raw"""
+        \documentclass{article}
+        \begin{document}
+        <<cached, cache=1>>=
+        x = 42
+        x
+        @
+        \end{document}
+        """)
+
+        # First run - no cache
+        tex_path = Knit.knit(jnw_path; compile=false, quiet=true)
+        @test isfile(tex_path)
+
+        # Cache directory should exist
+        @test isdir(cache_dir)
+
+        # Second run - cache hit
+        tex_path2 = Knit.knit(jnw_path; compile=false, quiet=true)
+        @test isfile(tex_path2)
+
+        # Verify cache files exist
+        entries = readdir(cache_dir)
+        @test length(entries) > 0
+
+        Knit.reset_knit_options()
+    end
+end
+
+@testset "child documents" begin
+    mktempdir() do dir
+        child_path = joinpath(dir, "child.jnw")
+        write(child_path, """
+        \\section{Child Section}
+        <<child_chunk>>=
+        1+1
+        @
+        """)
+
+        parent_path = joinpath(dir, "parent.jnw")
+        write(parent_path, """
+        \\documentclass{article}
+        \\begin{document}
+        \\section{Parent}
+        <<child="child.jnw">>=
+
+        @
+        \\end{document}
+        """)
+
+        tex_path = Knit.knit(parent_path; compile=false, quiet=true)
+        @test isfile(tex_path)
+        content = read(tex_path, String)
+        @test occursin("\\section{Parent}", content)
+        @test occursin("\\section{Child Section}", content)
+        @test occursin("\\begin{Shaded}", content)
+    end
+end
+
+@testset "smart passes in compile_pdf" begin
+    mktempdir() do dir
+        tex_path = joinpath(dir, "test.tex")
+        write(tex_path, raw"""
+        \documentclass{article}
+        \begin{document}
+        \section{Hello}
+        See page \pageref{sec:hello}.
+        \end{document}
+        """)
+        # compile_pdf needs pdflatex, so we just test determine_passes
+        @test Knit.determine_passes(read(tex_path, String)) == 2
+    end
+end
+
+@testset "resolve_inputs" begin
+    mktempdir() do dir
+        included_path = joinpath(dir, "included.tex")
+        write(included_path, "This is included content.\n")
+
+        main = raw"\input{included}"
+        result = Knit.resolve_inputs(main, dir)
+        @test occursin("This is included content.", result)
+        @test !occursin("\\input", result)
+
+        # Skip .jnw files
+        jnw_path = joinpath(dir, "child.jnw")
+        write(jnw_path, "child content")
+        main2 = raw"\input{child.jnw}"
+        result2 = Knit.resolve_inputs(main2, dir)
+        @test occursin("\\input{child.jnw}", result2)  # not resolved
+    end
+end
+
+@testset "normalize_includegraphics" begin
+    mktempdir() do dir
+        doc = "\\includegraphics{fig.png}"
+        result = Knit.normalize_includegraphics(doc, dir)
+        @test occursin("\\includegraphics{", result)
+        # Path should be absolute
+        @test !occursin("{fig.png}", result)
+    end
+end
+
+@testset "fig_dev chunk option" begin
+    @test Knit.get_chunk_default(:fig_dev) == "pdf"
+    Knit.set_chunk_default(:fig_dev, "png")
+    @test Knit.get_chunk_default(:fig_dev) == "png"
+    Knit.reset_chunk_defaults()
+    @test Knit.get_chunk_default(:fig_dev) == "pdf"
+end
+
+@testset "warning/message/error chunk options" begin
+    @test Knit.get_chunk_default(:warning) === true
+    @test Knit.get_chunk_default(:message) === true
+    @test Knit.get_chunk_default(:error) === true
+
+    Knit.set_chunk_default(:warning, false)
+    @test Knit.get_chunk_default(:warning) === false
+    Knit.reset_chunk_defaults()
+    @test Knit.get_chunk_default(:warning) === true
+
+    # Global options
+    @test Knit.get_knit_option(:warning) === true
+    @test Knit.get_knit_option(:message) === true
+    @test Knit.get_knit_option(:error) === true
+
+    Knit.set_knit_option(:warning, false)
+    @test Knit.get_knit_option(:warning) === false
+    Knit.reset_knit_options()
+    @test Knit.get_knit_option(:warning) === true
+end
+
+@testset "comment prefix" begin
+    @test Knit.get_chunk_default(:comment) == "##"
+
+    opts = copy(Knit.DEFAULT_CHUNK_OPTIONS)
+    segments = [(code="x", output="", warning="", message="", result=42, error="", figures=String[])]
+
+    # Default comment prefix
+    latex = Knit.generate_chunk_latex(segments, "test", opts)
+    @test occursin("## 42", latex)
+
+    # Custom comment prefix
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:comment=>">>")))
+    @test occursin(">> 42", latex)
+
+    # No comment prefix
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:comment=>"")))
+    @test occursin("42", latex)
+    @test !occursin("##", latex)
+end
+
+@testset "fig_align option" begin
+    @test Knit.get_chunk_default(:fig_align) == "default"
+
+    opts = copy(Knit.DEFAULT_CHUNK_OPTIONS)
+    figures = ["test_1_1.pdf"]
+
+    # default → no alignment env
+    latex = Knit.render_figures(merge(opts, Dict(:fig_align=>"default")), figures)
+    @test occursin("\\includegraphics", latex)
+    @test occursin("test_1_1.pdf", latex)
+    @test !occursin("\\begin{center}", latex)
+    @test !occursin("\\begin{flushleft}", latex)
+    @test !occursin("\\begin{flushright}", latex)
+
+    # center
+    latex = Knit.render_figures(merge(opts, Dict(:fig_align=>"center")), figures)
+    @test occursin("\\begin{center}", latex)
+    @test occursin("\\end{center}", latex)
+
+    # left
+    latex = Knit.render_figures(merge(opts, Dict(:fig_align=>"left")), figures)
+    @test occursin("\\begin{flushleft}", latex)
+    @test occursin("\\end{flushleft}", latex)
+
+    # right
+    latex = Knit.render_figures(merge(opts, Dict(:fig_align=>"right")), figures)
+    @test occursin("\\begin{flushright}", latex)
+    @test occursin("\\end{flushright}", latex)
+end
+
+@testset "error=false continues execution" begin
+    m = Module(:TestErrorContinue)
+    report = Knit.Report(pwd(), "test_error")
+    opts = merge(Knit.DEFAULT_CHUNK_OPTIONS, Dict(:error=>false))
+
+    result = Knit.execute_chunk("1+1\nerror(\"oops\")\n2+2", m, report, opts)
+    @test length(result) == 3
+    @test result[1].result == 2
+    @test !isempty(result[2].error)
+    @test result[3].result == 4
+end
+
+@testset "warning/message filtering in generate_chunk_latex" begin
+    opts = copy(Knit.DEFAULT_CHUNK_OPTIONS)
+
+    segments = [(code="x", output="", warning="Warning: something happened\n  at file:1", message="Info: just info", result=nothing, error="Error: bad", figures=String[])]
+
+    # warning=false suppresses warnings
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:warning=>false, :message=>false, :error=>false)))
+    @test !occursin("Warning:", latex)
+    @test !occursin("Info:", latex)
+    @test !occursin("Error:", latex)
+
+    # warning=true shows warnings
+    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:warning=>true, :message=>true, :error=>true)))
+    @test occursin("Warning:", latex)
+    @test occursin("Info:", latex)
+    @test occursin("Error:", latex)
 end

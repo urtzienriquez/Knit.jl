@@ -49,18 +49,19 @@ const MINTED_PREAMBLE = raw"""
 function _strip_latex_comments(doc::AbstractString)::String
     buf = IOBuffer()
     for line in split(doc, '\n')
+        chars = collect(line)
         i = 1
-        len = length(line)
-        while i <= len
-            if line[i] == '\\' && i < len
+        n = length(chars)
+        while i <= n
+            if chars[i] == '\\' && i < n
                 i += 2
-            elseif line[i] == '%'
+            elseif chars[i] == '%'
                 break
             else
                 i += 1
             end
         end
-        write(buf, SubString(line, 1, i - 1))
+        write(buf, join(chars[1:i-1]))
         write(buf, '\n')
     end
     return String(take!(buf))
@@ -178,6 +179,19 @@ function _build_preamble(doc::AbstractString, highlighting::Symbol; minted_style
             push!(needed, "\\usepackage{float}")
         else
             push!(skipped, "float")
+        end
+    end
+
+    if occursin(r"\\begin\{minted\}", doc)
+        if !_has_package(doc, "minted")
+            push!(needed, "\\usepackage{minted}")
+        else
+            push!(skipped, "minted")
+        end
+        if !_has_definecolor(doc, "knitbg")
+            push!(needed, "\\definecolor{knitbg}{rgb}{0.969, 0.969, 0.969}")
+        else
+            push!(skipped, "knitbg")
         end
     end
 

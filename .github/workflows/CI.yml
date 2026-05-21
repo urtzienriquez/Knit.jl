@@ -13,7 +13,6 @@ jobs:
     strategy:
       matrix:
         version:
-          - '1.6'
           - '1.11'
           - 'nightly'
       fail-fast: false

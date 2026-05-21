@@ -1,5 +1,8 @@
 # Knit.jl
 
+[![CI](https://github.com/urtzienriquez/Knit.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/urtzienriquez/Knit.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/github/urtzienriquez/Knit.jl/graph/badge.svg?token=0CDIACFXR2)](https://codecov.io/github/urtzienriquez/Knit.jl)
+
 A literate programming processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with syntax highlighting.
 
 ## Installation

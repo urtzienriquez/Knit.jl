@@ -67,6 +67,28 @@ end
 
     result = Knit.julia_to_latex("")
     @test occursin("\\begin{Shaded}", result)
+
+    # indented for loop body
+    code = "for i in 1:10\n    println(i)\nend"
+    result = Knit.julia_to_latex(code)
+    @test occursin("\\KeywordTok{for} \\NormalTok{i} \\KeywordTok{in} \\DecValTok{1}\\NormalTok{:}\\DecValTok{10}", result)
+    # raw newline+indent preserved (not wrapped in \NormalTok{})
+    @test occursin("\\DecValTok{10}\n    \\NormalTok{println}", result)
+    @test occursin("\\KeywordTok{end}", result)
+
+    # function with nested if statements
+    code2 = "function foo(x)\n    if x > 0\n        return x\n    else\n        return -x\n    end\nend"
+    result2 = Knit.julia_to_latex(code2)
+    # function body indented with 4 spaces (after closing paren of foo(x))
+    @test occursin("\\NormalTok{)}\n    \\KeywordTok{if}", result2)
+    # if body indented with 8 spaces (after `0`)
+    @test occursin("\\DecValTok{0}\n        \\FunctionTok{return}", result2)
+    # else at same level as if (4-space indent, after `x`)
+    @test occursin("\\NormalTok{x}\n    \\KeywordTok{else}", result2)
+    # nested ends: inner \KeywordTok{end} closes if, outer closes function
+    @test occursin("\\KeywordTok{end}\n\\KeywordTok{end}", result2)
+    # final \KeywordTok{end} before \end{Highlighting}
+    @test occursin("\\KeywordTok{end}\n\\end{Highlighting}", result2)
 end
 
 # ──────────────────────────────────────────────────────────────────────

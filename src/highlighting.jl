@@ -115,7 +115,7 @@ function julia_to_latex(code::String)::String
         else
             text = t.val
         end
-        if t.kind === :WHITESPACE || text == "\n" || text == "\r\n" || text == "\r"
+        if all(isspace, text)
             write(buf, text)
         else
             macro_name = get(TOKEN_MACROS, Symbol(t.kind), "\\NormalTok")

@@ -1,7 +1,7 @@
 using Serialization
 using SHA
 
-function _cache_hash(code::String, options::Dict{Symbol,Any}, cache_path::String)::String
+function _cache_hash(code::String, options::Dict{Symbol,Any})::String
     relevant_keys = [:eval, :warning, :message, :error, :cache, :fig_dev, :fig_width,
                      :fig_height, :dpi, :fig_ext, :results, :term, :hold, :echo]
     hash_input = IOBuffer()
@@ -33,13 +33,9 @@ function _cache_objects_dir(label::String, hash::String, cache_path::String)::St
     joinpath(_cache_dir(label, hash, cache_path), "objects")
 end
 
-function _cache_meta_path(label::String, hash::String, cache_path::String)::String
-    joinpath(_cache_dir(label, hash, cache_path), "meta.jlso")
-end
-
 function _cache_check(label::String, code::String, options::Dict{Symbol,Any},
                       exec_module::Module, cache_path::String)
-    hash = _cache_hash(code, options, cache_path)
+    hash = _cache_hash(code, options)
     output_path = _cache_output_path(label, hash, cache_path)
     isfile(output_path) || return nothing
 
@@ -68,7 +64,7 @@ end
 function _cache_save(label::String, code::String, options::Dict{Symbol,Any},
                      result::NamedTuple, exec_module::Module,
                      pre_names::Vector{String}, cache_path::String)
-    hash = _cache_hash(code, options, cache_path)
+    hash = _cache_hash(code, options)
     dir = _cache_dir(label, hash, cache_path)
     mkpath(dir)
 
@@ -94,25 +90,4 @@ function _cache_save(label::String, code::String, options::Dict{Symbol,Any},
         end
     end
 
-    meta = Dict{String,Any}(
-        "level" => level,
-        "label" => label,
-        "hash" => hash,
-    )
-    meta_path = _cache_meta_path(label, hash, cache_path)
-    serialize(meta_path, meta)
-end
-
-function _cache_purge(label::String, cache_path::String)
-    isdir(cache_path) || return
-    for entry in readdir(cache_path)
-        if startswith(entry, "$(label)_")
-            rm(joinpath(cache_path, entry), recursive=true, force=true)
-        end
-    end
-end
-
-function _cache_purge_all(cache_path::String)
-    isdir(cache_path) || return
-    rm(cache_path, recursive=true, force=true)
 end

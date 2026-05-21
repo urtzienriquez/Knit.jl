@@ -1,11 +1,3 @@
-const MIMETYPE_EXT = Dict(
-    ".png" => "image/png",
-    ".jpg" => "image/jpeg",
-    ".jpeg" => "image/jpeg",
-    ".svg" => "image/svg+xml",
-    ".pdf" => "application/pdf",
-)
-
 const DEV_MIME_ORDER = Dict(
     "pdf" => ["application/pdf", "image/png", "image/svg+xml"],
     "png" => ["image/png", "application/pdf", "image/svg+xml"],
@@ -95,7 +87,6 @@ function get_figname(report::Report; ext = nothing)
 end
 
 function render_figures(options::Dict{Symbol,Any}, figures::Vector{String})
-    fignames = figures
     caption = options[:fig_cap]
     width = options[:out_width]
     height = options[:out_height]
@@ -143,7 +134,7 @@ function render_figures(options::Dict{Symbol,Any}, figures::Vector{String})
         result *= align_open
     end
 
-    for fig in fignames
+    for fig in figures
         if isempty(attribs)
             figstring *= "\\includegraphics{$fig}\n"
         else

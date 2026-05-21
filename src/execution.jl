@@ -108,6 +108,7 @@ function _execute_segment(expr, exec_module::Module, report::Report, options::Di
     fig_height = get(options, :fig_height, 4)
     dpi = get(options, :dpi, 96)
     figures = String[]
+    caught_error = nothing
 
     try
         result = Core.eval(exec_module, expr)
@@ -133,35 +134,24 @@ function _execute_segment(expr, exec_module::Module, report::Report, options::Di
                 _save_figure(report, result; dev)
             end
         end
-
-        redirect_stdout(old_stdout)
-        redirect_stderr(old_stderr)
-        close(wr_out)
-        close(wr_err)
-        output = read(rd_out, String)
-        stderr_text = read(rd_err, String)
-
-        warn_lines, msg_lines, err_lines = _classify_stderr(stderr_text)
-        warning = join(warn_lines, '\n')
-        message = join(msg_lines, '\n')
-        error_msg = join(err_lines, '\n')
-
     catch e
-        redirect_stdout(old_stdout)
-        redirect_stderr(old_stderr)
-        close(wr_out)
-        close(wr_err)
-        output = read(rd_out, String)
-        stderr_text = read(rd_err, String)
+        caught_error = e
+    end
 
-        warn_lines, msg_lines, err_lines = _classify_stderr(stderr_text)
-        warning = join(warn_lines, '\n')
-        message = join(msg_lines, '\n')
-        error_msg = join(err_lines, '\n')
+    redirect_stdout(old_stdout)
+    redirect_stderr(old_stderr)
+    close(wr_out)
+    close(wr_err)
+    output = read(rd_out, String)
+    stderr_text = read(rd_err, String)
 
-        if isempty(error_msg)
-            error_msg = sprint(showerror, e)
-        end
+    warn_lines, msg_lines, err_lines = _classify_stderr(stderr_text)
+    warning = join(warn_lines, '\n')
+    message = join(msg_lines, '\n')
+    error_msg = join(err_lines, '\n')
+
+    if caught_error !== nothing && isempty(error_msg)
+        error_msg = sprint(showerror, caught_error)
     end
 
     return (result = result, output = output, warning = warning, message = message, error = error_msg, figures = figures)
@@ -257,21 +247,7 @@ function _add_comment_prefix(text::String, prefix::String)::String
     return join(prefixed, '\n')
 end
 
-function _filter_output(text::String, option_val)::String
-    if option_val === false
-        return ""
-    end
-    if option_val === true
-        return text
-    end
-    if option_val isa Integer && option_val > 0
-        lines = split(text, '\n')
-        return join(lines[1:min(option_val, length(lines))], '\n')
-    end
-    return text
-end
-
-function generate_chunk_latex(segments::Vector, chunk_name, options::Dict{Symbol,Any};
+function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
                               highlighting::Symbol=:tokens, minted_bg::Bool=true)
     latex = ""
     pending_code = String[]
@@ -512,12 +488,8 @@ function process_content(content::String, exec_module::Module, report::Report;
                     _cache_save(chunk_label, code, opts, result, exec_module, pre_names, cache_path)
                 end
             else
-                pre_names = string.(names(exec_module))
                 exec_result = execute_chunk(code, exec_module, report, opts)
                 result = (segments = exec_result, figures = copy(report.figures))
-                if cache_level > 0
-                    _cache_save(chunk_label, code, opts, result, exec_module, pre_names, cache_path)
-                end
             end
 
             if name !== nothing && String(name) == "setup"
@@ -526,11 +498,6 @@ function process_content(content::String, exec_module::Module, report::Report;
         else
             segments = [(code = code, output = "", warning = "", message = "", result = nothing, error = "", figures = String[])]
             result = (segments = segments, figures = String[])
-        end
-
-        if !opts[:include]
-            push!(chunk_data, (m, code, result, name, opts, "", false))
-            continue
         end
 
         push!(chunk_data, (m, code, result, name, opts, "", false))
@@ -543,7 +510,7 @@ function process_content(content::String, exec_module::Module, report::Report;
         elseif !opts[:include]
             latex_output = ""
         else
-            latex_output = generate_chunk_latex(result.segments, name, opts; highlighting, minted_bg)
+            latex_output = generate_chunk_latex(result.segments, opts; highlighting, minted_bg)
         end
         processed =
             processed[1:m.offset-1] * latex_output * processed[m.offset+length(m.match):end]

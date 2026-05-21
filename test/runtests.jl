@@ -442,56 +442,56 @@ end
 
     # echo with term=true → minted term block
     segments = [(code="1+1", output="", warning="", message="", result=nothing, error="", figures=String[])]
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true, :term=>true)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true, :term=>true)))
     @test occursin("\\begin{minted}", latex)
     @test occursin("{jlcon}", latex)
     @test occursin("1+1", latex)
     @test occursin("\\end{minted}", latex)
 
     # echo with highlighting=:minted
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true));
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true));
                                       highlighting=:minted)
     @test occursin("\\begin{minted}", latex)
     @test occursin("{julia}", latex)
 
     # echo with default highlighting (:tokens) → Shaded block
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true)))
     @test occursin("\\begin{Shaded}", latex)
 
     # echo=false → no code
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>false)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>false)))
     @test !occursin("1+1", latex)
 
     # with output
     segments = [(code="println(\"Hello\")", output="Hello\nWorld", warning="", message="", result=nothing, error="", figures=String[])]
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true)))
     @test occursin("\\begin{verbatim}", latex)
     @test occursin("## Hello", latex)
     @test occursin("## World", latex)
     @test occursin("\\end{verbatim}", latex)
 
     # with output, comment disabled
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true, :comment=>"")))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true, :comment=>"")))
     @test occursin("\\begin{verbatim}", latex)
     @test occursin("Hello\nWorld", latex)
     @test occursin("\\end{verbatim}", latex)
 
     # with error
     segments = [(code="error(\"msg\")", output="", warning="", message="", result=nothing, error="SomeError", figures=String[])]
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true)))
     @test occursin("\\textbf{Error:}", latex)
     @test occursin("SomeError", latex)
 
     # results=hide → no output/result/error blocks (code still shown if echo)
     segments = [(code="42", output="", warning="", message="", result=42, error="", figures=String[])]
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true, :results=>"hide")))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true, :results=>"hide")))
     @test occursin("\\begin{Shaded}", latex)  # code shown
     @test !occursin("print", latex)           # output hidden
     @test !occursin("\\begin{verbatim}", latex)
 
     # result present, no output → show result string
     segments = [(code="42", output="", warning="", message="", result=42, error="", figures=String[])]
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>false)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>false)))
     @test occursin("\\begin{verbatim}", latex)
     @test occursin("42", latex)
 
@@ -500,7 +500,7 @@ end
         (code="x = 10", output="", warning="", message="", result=nothing, error="", figures=String[]),
         (code="x", output="", warning="", message="", result=10, error="", figures=String[]),
     ]
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:echo=>true)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:echo=>true)))
     @test occursin("\\begin{Shaded}", latex)
     @test occursin("\\begin{verbatim}", latex)
     @test occursin("10", latex)
@@ -956,15 +956,15 @@ end
     segments = [(code="x", output="", warning="", message="", result=42, error="", figures=String[])]
 
     # Default comment prefix
-    latex = Knit.generate_chunk_latex(segments, "test", opts)
+    latex = Knit.generate_chunk_latex(segments, opts)
     @test occursin("## 42", latex)
 
     # Custom comment prefix
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:comment=>">>")))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:comment=>">>")))
     @test occursin(">> 42", latex)
 
     # No comment prefix
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:comment=>"")))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:comment=>"")))
     @test occursin("42", latex)
     @test !occursin("##", latex)
 end
@@ -1017,13 +1017,13 @@ end
     segments = [(code="x", output="", warning="Warning: something happened\n  at file:1", message="Info: just info", result=nothing, error="Error: bad", figures=String[])]
 
     # warning=false suppresses warnings
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:warning=>false, :message=>false, :error=>false)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:warning=>false, :message=>false, :error=>false)))
     @test !occursin("Warning:", latex)
     @test !occursin("Info:", latex)
     @test !occursin("Error:", latex)
 
     # warning=true shows warnings
-    latex = Knit.generate_chunk_latex(segments, "test", merge(opts, Dict(:warning=>true, :message=>true, :error=>true)))
+    latex = Knit.generate_chunk_latex(segments, merge(opts, Dict(:warning=>true, :message=>true, :error=>true)))
     @test occursin("Warning:", latex)
     @test occursin("Info:", latex)
     @test occursin("Error:", latex)

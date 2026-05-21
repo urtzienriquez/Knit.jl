@@ -108,20 +108,15 @@ end
 
 function _preamble_line_defined(doc::AbstractString, line::AbstractString)::Bool
     if startswith(line, "\\usepackage")
-        m = match(r"\\usepackage(?:\[.*?\])?\{(.+?)\}", line)
-        return m !== nothing && _has_package(doc, m.captures[1])
+        return _has_package(doc, _extract_name(line))
     elseif startswith(line, "\\newcommand")
-        m = match(r"\\newcommand\*?\{(.+?)\}", line)
-        return m !== nothing && _has_newcommand(doc, m.captures[1])
+        return _has_newcommand(doc, _extract_name(line))
     elseif startswith(line, "\\newenvironment")
-        m = match(r"\\newenvironment\{(.+?)\}", line)
-        return m !== nothing && _has_newenvironment(doc, m.captures[1])
+        return _has_newenvironment(doc, _extract_name(line))
     elseif startswith(line, "\\definecolor")
-        m = match(r"\\definecolor\{(.+?)\}", line)
-        return m !== nothing && _has_definecolor(doc, m.captures[1])
+        return _has_definecolor(doc, _extract_name(line))
     elseif startswith(line, "\\DefineVerbatimEnvironment")
-        m = match(r"\\DefineVerbatimEnvironment\{(.+?)\}", line)
-        return m !== nothing && _has_defineverbatimenvironment(doc, m.captures[1])
+        return _has_defineverbatimenvironment(doc, _extract_name(line))
     end
     return false
 end

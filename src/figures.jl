@@ -4,6 +4,14 @@ const DEV_MIME_ORDER = Dict(
     "svg" => ["image/svg+xml", "image/png", "application/pdf"],
 )
 
+"""
+    Report <: AbstractDisplay
+
+Tracks the state of figure generation during knitting.
+
+Captures plot displays via Julia's display system and saves figures to a dedicated
+directory named `{basename}_figures/`.
+"""
 mutable struct Report <: AbstractDisplay
     cwd::String
     basename::String
@@ -14,6 +22,11 @@ mutable struct Report <: AbstractDisplay
     fig_dev::String
 end
 
+"""
+    Report(cwd, basename; fig_dev="pdf")
+
+Construct a `Report` for figure tracking. Figures are stored in `{basename}_figures/`.
+"""
 function Report(cwd, basename; fig_dev::String="pdf")
     fig_path = basename * "_figures"
     Report(cwd, basename, 1, String[], nothing, fig_path, fig_dev)
@@ -63,6 +76,12 @@ function _save_figure(report::Report, data; dev::String="pdf")
     end
 end
 
+"""
+    add_figure(report, data, m, ext)
+
+Save a figure to disk and register it in the report. The file is written to
+`{report.fig_path}/{basename}_{chunk}_{fignum}{ext}`.
+"""
 function add_figure(report::Report, data, m, ext)
     mkpath(joinpath(report.cwd, report.fig_path))
     full_name, rel_name = get_figname(report, ext = ext)
@@ -78,6 +97,12 @@ function add_figure(report::Report, data, m, ext)
     return full_name
 end
 
+"""
+    get_figname(report; ext=nothing)
+
+Generate a unique figure filename based on the current report state (basename, chunk,
+figure number). Returns `(full_path, relative_path)`.
+"""
 function get_figname(report::Report; ext = nothing)
     chunkid = report.cur_chunk
     fname = string(report.basename, '_', chunkid, '_', report.fignum, ext)
@@ -86,6 +111,14 @@ function get_figname(report::Report; ext = nothing)
     return full_name, rel_name
 end
 
+"""
+    render_figures(options, figures)
+
+Generate LaTeX code to include figure files with the given options.
+
+Supports centering, captions, labels, `\\includegraphics` attributes,
+figure environments, and alignment.
+"""
 function render_figures(options::Dict{Symbol,Any}, figures::Vector{String})
     caption = options[:fig_cap]
     width = options[:out_width]

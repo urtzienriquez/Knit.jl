@@ -157,6 +157,14 @@ function _execute_segment(expr, exec_module::Module, report::Report, options::Di
     return (result = result, output = output, warning = warning, message = message, error = error_msg, figures = figures)
 end
 
+"""
+    execute_chunk(code, exec_module, report, options)
+
+Execute all expressions in a code chunk within `exec_module`.
+
+Returns a vector of segment results, each containing code, output, warnings,
+messages, errors, and figure paths. Only the final plot in a sequence is kept.
+"""
 function execute_chunk(code::String, exec_module::Module, report::Report, options::Dict{Symbol,Any})
     old_gks = get(ENV, "GKSwstype", nothing)
     ENV["GKSwstype"] = "100"
@@ -219,6 +227,12 @@ function execute_chunk(code::String, exec_module::Module, report::Report, option
     end
 end
 
+"""
+    execute_inline(code, exec_module)
+
+Evaluate a single inline expression (from `\\Sexpr{...}`) and return its string representation.
+Returns `"ERROR: ..."` on failure.
+"""
 function execute_inline(code::String, exec_module::Module)
     try
         expr = Meta.parse(code)
@@ -247,6 +261,14 @@ function _add_comment_prefix(text::String, prefix::String)::String
     return join(prefixed, '\n')
 end
 
+"""
+    generate_chunk_latex(segments, options; highlighting=:tokens, minted_bg=true)
+
+Convert executed chunk segments into LaTeX markup.
+
+Handles code display (with syntax highlighting), text output, warnings/messages/errors,
+and figure inclusion. Respects chunk options like `echo`, `results`, `term`, and `hold`.
+"""
 function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
                               highlighting::Symbol=:tokens, minted_bg::Bool=true)
     latex = ""
@@ -415,6 +437,16 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
     return latex
 end
 
+"""
+    process_content(content, exec_module, report; highlighting=:tokens, quiet=false,
+                    minted_bg=true, input_dir=pwd(), options_locked=Ref(false))
+
+Process a `.jnw` document string: parse and execute all code chunks, evaluate inline
+`\\Sexpr{...}` expressions, and return the woven LaTeX output.
+
+Chunks are processed in order and replaced in reverse to preserve offsets.
+Inline expressions are replaced after chunk processing.
+"""
 function process_content(content::String, exec_module::Module, report::Report;
                          highlighting::Symbol=:tokens, quiet::Bool=false,
                          minted_bg::Bool=true, input_dir::String=pwd(),

@@ -42,6 +42,13 @@ const KNIT_OPTS = Dict{Symbol,Any}(
 
 const _chunk_defaults = copy(DEFAULT_CHUNK_OPTIONS)
 
+"""
+    set_knit_option(key, value)
+
+Set a global knit option. Raises an error for unknown keys.
+
+See [`KNIT_OPTS`](@ref) for available options (engine, cache_path, root_dir, etc.).
+"""
 function set_knit_option(key::Symbol, value)
     if !haskey(KNIT_OPTS, key)
         error_knit("Unknown knit option '$key'")
@@ -49,6 +56,11 @@ function set_knit_option(key::Symbol, value)
     KNIT_OPTS[key] = value
 end
 
+"""
+    get_knit_option(key)
+
+Get the current value of a global knit option.
+"""
 function get_knit_option(key::Symbol)
     if !haskey(KNIT_OPTS, key)
         error_knit("Unknown knit option '$key'")
@@ -56,6 +68,11 @@ function get_knit_option(key::Symbol)
     KNIT_OPTS[key]
 end
 
+"""
+    reset_knit_options()
+
+Reset all global knit options to their default values.
+"""
 function reset_knit_options()
     KNIT_OPTS[:engine] = :pdflatex
     KNIT_OPTS[:progress] = true
@@ -70,6 +87,13 @@ function reset_knit_options()
     KNIT_OPTS[:error] = true
 end
 
+"""
+    set_chunk_default(key, value)
+
+Set the default value for a chunk option. Individual chunks can override these defaults.
+
+See [`DEFAULT_CHUNK_OPTIONS`](@ref) for available options.
+"""
 function set_chunk_default(key::Symbol, value)
     if !haskey(DEFAULT_CHUNK_OPTIONS, key)
         error_knit("Unknown chunk option '$key'")
@@ -77,6 +101,11 @@ function set_chunk_default(key::Symbol, value)
     _chunk_defaults[key] = value
 end
 
+"""
+    get_chunk_default(key)
+
+Get the current default value for a chunk option.
+"""
 function get_chunk_default(key::Symbol)
     if !haskey(_chunk_defaults, key)
         error_knit("Unknown chunk option '$key'")
@@ -84,12 +113,24 @@ function get_chunk_default(key::Symbol)
     _chunk_defaults[key]
 end
 
+"""
+    reset_chunk_defaults()
+
+Reset all chunk option defaults to their initial values.
+"""
 function reset_chunk_defaults()
     for (k, v) in DEFAULT_CHUNK_OPTIONS
         _chunk_defaults[k] = v
     end
 end
 
+"""
+    merge_chunk_options(header_opts)
+
+Merge per-chunk options with the current global defaults. Chunk-specific values
+take precedence. Global `warning`/`message`/`error` settings are applied unless
+the chunk explicitly overrides them.
+"""
 function merge_chunk_options(header_opts::Dict{Symbol,Any})
     merged = copy(_chunk_defaults)
     for (k, v) in header_opts
@@ -110,6 +151,12 @@ end
 
 is_valid_kv(x) = Meta.isexpr(x, :(=))
 
+"""
+    parse_options(str)
+
+Parse a comma-separated key=value string into a dictionary of chunk options.
+Handles quoted string values.
+"""
 function parse_options(str::AbstractString)::Dict{Symbol,Any}
     isempty(str) && return Dict{Symbol,Any}()
     str = string('(', str, ')')
@@ -129,6 +176,14 @@ function parse_options(str::AbstractString)::Dict{Symbol,Any}
     end
 end
 
+"""
+    parse_chunk_header(header_str)
+
+Parse a chunk header string (the content between `<<` and `>>=`).
+
+Returns a tuple `(name, options_dict)`. The name is `nothing` for unnamed chunks.
+A trailing `;` on the name sets `results="hide"`.
+"""
 function parse_chunk_header(header_str::AbstractString)
     s = strip(header_str)
     isempty(s) && return nothing, Dict{Symbol,Any}()

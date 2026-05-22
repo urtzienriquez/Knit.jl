@@ -1,3 +1,11 @@
+"""
+    tangle(input_file; output_file="")
+
+Extract Julia source code from a `.jnw` file, producing a standalone `.jl` file.
+
+Code chunks are extracted in order. Non-evaluated chunks are commented out.
+Each chunk is preceded by a comment marking its header.
+"""
 function tangle(input_file::String; output_file::String = "")
     content = read(input_file, String)
     chunk_pattern = r"<<(?<header>[^>]*)>>=[ \t]*\n(?<code>.*?)\n@[ \t]*(?:\n|$)"s

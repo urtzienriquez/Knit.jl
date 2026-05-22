@@ -62,6 +62,31 @@ When a style is set, the default code block background (`knitbg`) is removed. Ad
 
 This requires `pip install Pygments` and the `minted` LaTeX package.
 
+## Editor Support
+
+`.jnw` files use the **J**ulia **N**o**w**eb format — a literate programming format where LaTeX prose is interleaved with Julia code chunks delimited by `<<...>>= ... @`. For syntax highlighting and proper editing support, use the [tree-sitter-jnoweb](https://github.com/urtzienriquez/tree-sitter-jnoweb) grammar.
+
+### Quick setup (Neovim)
+
+1. Register the filetype:
+   ```lua
+   vim.filetype.add({ extension = { jnw = "jnoweb" } })
+   ```
+
+2. Compile and register the parser:
+   ```bash
+   gcc -O2 -shared -I src src/parser.c src/scanner.c \
+     -o ~/.local/share/nvim/site/parser/jnoweb.so
+   ```
+
+3. Symlink the query files for highlighting and injections:
+   ```bash
+   ln -sf /path/to/tree-sitter-jnoweb/queries/highlights.scm ~/.config/nvim/queries/jnoweb/
+   ln -sf /path/to/tree-sitter-jnoweb/queries/injections.scm ~/.config/nvim/queries/jnoweb/
+   ```
+
+The tree-sitter-jnoweb repo also ships [`jnoweb-fmt`](https://github.com/urtzienriquez/tree-sitter-jnoweb#formatting), a formatter that formats Julia chunks with JuliaFormatter and LaTeX prose with latexindent.
+
 ## PDF Compilation
 
 PDF compilation runs `pdflatex -shell-escape` automatically. If your document contains `\bibliography{}`, `\bibliographystyle{}`, or `\addbibresource{}`, the appropriate bibliography engine (bibtex or biber) is detected and run automatically.

@@ -65,6 +65,12 @@ const TOKEN_MACROS = Dict{Symbol,String}(
 const MINTED_CODE_END = "\\end{minted}"
 const MINTED_TERM_END = "\\end{minted}"
 
+"""
+    _minted_start(term, bg)
+
+Build the opening `\\begin{minted}[...]{...}` line. Uses the `jlcon` lexer for
+terminal-style output or `julia` for regular code. Optionally sets `bgcolor=knitbg`.
+"""
 function _minted_start(term::Bool, bg::Bool)::String
     base = "texcomments = true, mathescape, fontsize="
     base *= term ? "\\footnotesize" : "\\small"
@@ -74,6 +80,11 @@ function _minted_start(term::Bool, bg::Bool)::String
     return "\\begin{minted}[$base]{$lexer}"
 end
 
+"""
+    escape_latex(s)
+
+Escape special LaTeX characters in a string so it can be safely embedded in LaTeX output.
+"""
 function escape_latex(s::String)::String
     buf = IOBuffer()
     for c in s
@@ -104,6 +115,12 @@ function escape_latex(s::String)::String
     return String(take!(buf))
 end
 
+"""
+    julia_to_latex(code)
+
+Tokenize Julia code and produce highlighted LaTeX output using pandoc-style
+token macros (`\\CommentTok`, `\\KeywordTok`, etc.).
+"""
 function julia_to_latex(code::String)::String
     tokens = collect(tokenize(code))
     buf = IOBuffer()

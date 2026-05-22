@@ -67,6 +67,12 @@ function _strip_latex_comments(doc::AbstractString)::String
     return String(take!(buf))
 end
 
+"""
+    _check_color_definition(doc)
+
+Validate that `\\definecolor{...}` in the document preamble is preceded by
+`\\usepackage{xcolor}`. Raises an error if xcolor is missing.
+"""
 function _check_color_definition(doc::AbstractString)
     m = match(r"^(.*?)\\begin\{document\}", doc)
     preamble = m !== nothing ? m.captures[1] : doc
@@ -141,6 +147,18 @@ function _extract_name(line::AbstractString)::String
     return line
 end
 
+"""
+    _build_preamble(doc, highlighting; minted_style=nothing, minted_bg=true)
+
+Build the LaTeX preamble block to insert into the document.
+
+Only includes packages/commands that are not already defined in the document.
+For `:tokens` highlighting, inserts pandoc-style macro definitions, `xcolor`,
+`fancyvrb`, and `framed`. For `:minted`, inserts `minted` and `xcolor` packages
+plus optional `\\usemintedstyle`.
+
+Returns `(preamble_text, n_inserted, skipped_packages)`.
+"""
 function _build_preamble(doc::AbstractString, highlighting::Symbol; minted_style::Union{Nothing,String} = nothing, minted_bg::Bool = true)
     preamble_text = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
     lines = split(strip(preamble_text), '\n')

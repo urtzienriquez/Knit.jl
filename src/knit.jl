@@ -1,3 +1,25 @@
+"""
+    knit(input_file; output_file="", compile=true, engine=nothing,
+         highlighting=:tokens, minted_style=nothing, quiet=false)
+
+Process a `.jnw` file and produce a `.tex` (and optionally `.pdf`) output.
+
+Code chunks delimited by `<<...>>= ... @` are executed, and their output is woven
+into the LaTeX document. Inline expressions `\\Sexpr{...}` are evaluated and replaced
+with their string representation.
+
+# Arguments
+- `input_file::String`: path to the `.jnw` file
+- `output_file::String`: output `.tex` path (default: same name as input, `.tex` extension)
+- `compile::Bool`: if `true`, run the LaTeX engine to produce a PDF (default: `true`)
+- `engine::Union{Symbol,Nothing}`: LaTeX engine (`:pdflatex`, `:lualatex`, `:xelatex`); falls back to global option
+- `highlighting::Symbol`: `:tokens` (pandoc-style, no deps) or `:minted` (Pygments-based)
+- `minted_style::Union{Nothing,String}`: Pygments style name (e.g. `"monokai"`)
+- `quiet::Bool`: suppress progress output
+
+# Returns
+Path to the generated `.tex` file, or the `.pdf` path if compilation succeeded.
+"""
 function knit(input_file::String; output_file::String = "", compile::Bool = true,
               engine::Union{Symbol,Nothing} = nothing, highlighting::Symbol = :tokens,
               minted_style::Union{Nothing,String} = nothing, quiet::Bool = false,

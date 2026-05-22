@@ -84,12 +84,29 @@ function _parse_bib_log(log_path::String)::Vector{String}
     return issues
 end
 
+"""
+    detect_bib_engine(tex_content)
+
+Detect which bibliography engine is needed based on the LaTeX document content.
+
+Returns `:biber` if `\\addbibresource` is found, `:bibtex` if `\\bibliography` or
+`\\bibliographystyle` is found, or `nothing` if no bibliography is used.
+"""
 function detect_bib_engine(tex_content::String)::Union{Symbol, Nothing}
     occursin(r"\\addbibresource\{", tex_content) && return :biber
     (occursin(r"\\bibliography\{", tex_content) || occursin(r"\\bibliographystyle\{", tex_content)) && return :bibtex
     return nothing
 end
 
+"""
+    determine_passes(tex_content)
+
+Determine the number of LaTeX compilation passes required.
+
+- 1 pass: plain document
+- 2 passes: has `\\begin{minted}`, `\\ref`, `\\pageref`, or `\\tableofcontents`
+- 3 passes: has `\\cite`, `\\nocite`, or `\\addbibresource`
+"""
 function determine_passes(tex_content::String)::Int
     has_ref = occursin(r"\\ref\{", tex_content) || occursin(r"\\pageref\{", tex_content)
     has_cite = occursin(r"\\cite", tex_content) || occursin(r"\\nocite", tex_content) ||
@@ -116,6 +133,12 @@ function _bib_digest(aux_path::String)::String
     return bytes2hex(sha256(content))
 end
 
+"""
+    is_pdf_up_to_date(tex_file, pdf_file, bib_engine, work_dir, base_name)
+
+Check whether the PDF is newer than the `.tex` source and, if bibliography is used,
+whether the `.aux` file's bibliography digest is unchanged.
+"""
 function is_pdf_up_to_date(tex_file::String, pdf_file::String, bib_engine::Union{Symbol,Nothing},
                            work_dir::String, base_name::String)::Bool
     isfile(pdf_file) || return false
@@ -137,6 +160,23 @@ function is_pdf_up_to_date(tex_file::String, pdf_file::String, bib_engine::Union
     return false
 end
 
+"""
+    compile_pdf(tex_file; engine=nothing, bib_engine=nothing, quiet=false)
+
+Compile a `.tex` file to PDF using the specified LaTeX engine.
+
+Automatically runs bibliography tools (bibtex/biber) as needed, performs multiple
+compilation passes for references and citations, and parses the LaTeX log for errors.
+
+# Arguments
+- `tex_file::String`: path to the `.tex` file
+- `engine::Union{Symbol,Nothing}`: `:pdflatex`, `:lualatex`, or `:xelatex` (default from global option)
+- `bib_engine::Union{Symbol,Nothing}`: force a specific bibliography engine; auto-detected if `nothing`
+- `quiet::Bool`: suppress progress output
+
+# Returns
+Path to the generated `.pdf` file.
+"""
 function compile_pdf(tex_file::String; engine::Union{Symbol,Nothing}=nothing,
                      bib_engine::Union{Symbol,Nothing}=nothing, quiet::Bool=false)
     if engine === nothing
@@ -217,6 +257,13 @@ function compile_pdf(tex_file::String; engine::Union{Symbol,Nothing}=nothing,
     end
 end
 
+"""
+    resolve_inputs(doc, input_dir)
+
+Recursively replace `\\input{...}` and `\\include{...}` commands with the content
+of the referenced files up to a depth of 10. Only `.tex` files are inlined;
+`.jnw` and `.rnw` files are left as-is.
+"""
 function resolve_inputs(doc::String, input_dir::String)::String
     max_depth = 10
     for _ in 1:max_depth
@@ -243,6 +290,11 @@ function resolve_inputs(doc::String, input_dir::String)::String
     return doc
 end
 
+"""
+    normalize_includegraphics(doc, input_dir)
+
+Resolve relative paths in `\\includegraphics` commands to absolute paths rooted at `input_dir`.
+"""
 function normalize_includegraphics(doc::String, input_dir::String)::String
     pattern = r"\\includegraphics\*?(?:\[[^\]]*\])?\{([^}]+)\}"
     result = IOBuffer()

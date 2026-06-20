@@ -349,7 +349,7 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
             filtered_message = _filter_counted(get(seg, :message, ""), options[:message], message_shown)
             filtered_error = _filter_counted(seg.error, options[:error], error_shown)
 
-            has_output = !isempty(seg.output) ||
+            has_output = (options[:message] && !isempty(seg.output)) ||
                          (!isnothing(seg.result) && isempty(seg.output) && !has_figures) ||
                          !isempty(filtered_error) ||
                          !isempty(filtered_warning) ||
@@ -358,7 +358,7 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
             if has_output || has_figures
                 if is_hold
                     seg_latex = ""
-                    if !isempty(seg.output)
+                    if options[:message] && !isempty(seg.output)
                         seg_latex *= "\\begin{verbatim}\n"
                         seg_latex *= chomp(_add_comment_prefix(seg.output, comment_prefix))
                         seg_latex *= "\n\\end{verbatim}\n"
@@ -390,7 +390,7 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
                 else
                     flush_code!()
 
-                    if !isempty(seg.output)
+                    if options[:message] && !isempty(seg.output)
                         latex *= "\\begin{verbatim}\n"
                         latex *= chomp(_add_comment_prefix(seg.output, comment_prefix))
                         latex *= "\n\\end{verbatim}\n"

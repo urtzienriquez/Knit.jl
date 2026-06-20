@@ -128,10 +128,12 @@ function _execute_segment(expr, exec_module::Module, report::Report, options::Di
                     push!(figures, rel_name)
                     report.fignum += 1
                 else
-                    _save_figure(report, result; dev)
+                    rel_name = _save_figure(report, result; dev)
+                    rel_name !== nothing && push!(figures, rel_name)
                 end
             else
-                _save_figure(report, result; dev)
+                rel_name = _save_figure(report, result; dev)
+                rel_name !== nothing && push!(figures, rel_name)
             end
         end
     catch e

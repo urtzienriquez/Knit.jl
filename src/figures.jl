@@ -68,7 +68,7 @@ function _save_figure(report::Report, data; dev::String="pdf")
                 ext = mime_str == "application/pdf" ? ".pdf" :
                       mime_str == "image/png"      ? ".png"  : ".svg"
                 add_figure(report, data, MIME(mime_str), ext)
-                return
+                return report.figures[end]
             catch
                 continue
             end

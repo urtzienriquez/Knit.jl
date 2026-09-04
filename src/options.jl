@@ -20,6 +20,9 @@ const DEFAULT_CHUNK_OPTIONS = Dict{Symbol,Any}(
     :label     => nothing,
     :include   => true,
     :child     => nothing,
+    :ref_label => nothing,
+    :ref_chunk => true,
+    :code      => nothing,
     :warning   => true,
     :message   => true,
     :error     => true,
@@ -221,8 +224,8 @@ function _warn_unknown_options(header_str::AbstractString, name)
         strip(s[idx+1:end])
     end
     isempty(options_str) && return
-    for m in eachmatch(r"(\w+)\s*=", options_str)
-        key = Symbol(m.captures[1])
+    opts = parse_options(options_str)
+    for key in keys(opts)
         if !haskey(DEFAULT_CHUNK_OPTIONS, key)
             warn_knit("Chunk '$(name)': unknown option '$key'")
         end

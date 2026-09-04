@@ -440,6 +440,42 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
 end
 
 """
+    resolve_ref_chunks(code, registry; ref_chunk_pattern)
+
+Resolve `<<label>>` references (without `=`) inside chunk code by inlining
+the referenced chunk's source code from the registry. References are resolved
+recursively and indentation is preserved. Unmatched references are left as-is.
+"""
+function resolve_ref_chunks(code::String, registry::Dict{String,Vector{String}};
+                            ref_chunk_pattern::Regex=r"<<([^>]+)>>\s*$")
+    lines = [String(s) for s in split(code, '\n')]
+    result = _resolve_lines(lines, registry, ref_chunk_pattern)
+    return join(result, '\n')
+end
+
+function _resolve_lines(lines::Vector{String}, registry::Dict{String,Vector{String}}, pat::Regex)
+    result = String[]
+    for i in eachindex(lines)
+        line = lines[i]
+        m = match(pat, line)
+        if m !== nothing
+            label = strip(m.captures[1])
+            if haskey(registry, label)
+                indent = match(r"^(\s*)", line).captures[1]
+                ref_code = registry[label]
+                substituted = [indent * rl for rl in ref_code]
+                remaining = lines[i+1:end]
+                # Recursively resolve the substituted code concatenated with remaining lines
+                all_lines = vcat(result, _resolve_lines(vcat(substituted, remaining), registry, pat))
+                return all_lines
+            end
+        end
+        push!(result, line)
+    end
+    return result
+end
+
+"""
     process_content(content, exec_module, report; highlighting=:tokens, quiet=false,
                     minted_bg=true, input_dir=pwd(), options_locked=Ref(false))
 
@@ -461,7 +497,14 @@ function process_content(content::String, exec_module::Module, report::Report;
 
     vprintln_header(quiet, "Processing $total chunk(s)...")
 
-    chunk_data = []
+    # ------------------------------------------------------------------
+    # Pass 1: collect all chunk code into a registry, resolve ref.label
+    #         and code option. This allows chunks to reference any other
+    #         chunk (not just previously executed ones).
+    # ------------------------------------------------------------------
+    code_registry = Dict{String,Vector{String}}()
+    chunk_infos = []  # (match, code, name, opts) for each chunk
+
     for (i, m) in enumerate(chunks)
         header_str = String(m[:header])
         code = String(m[:code])
@@ -472,6 +515,34 @@ function process_content(content::String, exec_module::Module, report::Report;
         if opts[:term]
             opts[:eval] = false
         end
+
+        # Resolve ref.label: use referenced chunk's code instead
+        if opts[:ref_label] !== nothing
+            ref_labels = split(string(opts[:ref_label]), r"[;,]\s*")
+            ref_codes = [get(code_registry, strip(rl), String[]) for rl in ref_labels]
+            code = join(vcat(ref_codes...), "\n")
+        end
+
+        # Resolve code option: use literal string instead of chunk body
+        if opts[:code] !== nothing
+            code = string(opts[:code])
+        end
+
+        # Store resolved code in registry (skip child chunks)
+        if name !== nothing && opts[:child] === nothing
+            code_registry[string(name)] = split(code, '\n')
+        end
+
+        push!(chunk_infos, (m=m, code=code, name=name, opts=opts))
+    end
+
+    # ------------------------------------------------------------------
+    # Pass 2: execute chunks, resolving <<label>> inline references
+    # ------------------------------------------------------------------
+    chunk_data = []
+
+    for (i, info) in enumerate(chunk_infos)
+        m, code, name, opts = info.m, info.code, info.name, info.opts
 
         if opts[:child] !== nothing
             vprintln_progress(quiet, "Chunk $i/$total: child '$(opts[:child])'")
@@ -496,6 +567,11 @@ function process_content(content::String, exec_module::Module, report::Report;
             push!(chunk_data, (m, code, (segments=Tuple{String, Any}[], output="", warning="", message="", error="", figures=String[]),
                               name, opts, child_tex, true))
             continue
+        end
+
+        # Resolve <<label>> inline references in chunk code
+        if get(opts, :ref_chunk, true)
+            code = resolve_ref_chunks(code, code_registry)
         end
 
         vprintln_progress(quiet, "Chunk $i/$total: $(name !== nothing ? name : "(unnamed)")")

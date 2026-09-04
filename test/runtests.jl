@@ -1050,3 +1050,157 @@ end
     @test occursin("Info:", latex)
     @test occursin("Error:", latex)
 end
+
+# ------------------------------------------------------------------
+# Code chunk reuse tests
+# ------------------------------------------------------------------
+
+@testset "resolve_ref_chunks" begin
+    registry = Dict{String,Vector{String}}(
+        "setup" => ["x = 42", "y = x + 1"],
+        "inner" => ["z = 99"],
+    )
+
+    # Single reference
+    code = "before\n<<setup>>\nafter"
+    result = Knit.resolve_ref_chunks(code, registry)
+    @test occursin("x = 42", result)
+    @test occursin("y = x + 1", result)
+    @test occursin("before", result)
+    @test occursin("after", result)
+
+    # Multiple references
+    code = "<<setup>>\n<<inner>>"
+    result = Knit.resolve_ref_chunks(code, registry)
+    @test occursin("x = 42", result)
+    @test occursin("z = 99", result)
+
+    # Indentation preserved
+    code = "  <<setup>>"
+    result = Knit.resolve_ref_chunks(code, registry)
+    @test occursin("  x = 42", result)
+    @test occursin("  y = x + 1", result)
+
+    # Missing label left as-is
+    code = "<<nonexistent>>"
+    result = Knit.resolve_ref_chunks(code, registry)
+    @test result == "<<nonexistent>>"
+
+    # No references — unchanged
+    code = "plain code\nno refs"
+    result = Knit.resolve_ref_chunks(code, registry)
+    @test result == code
+
+    # Nested references
+    registry2 = Dict{String,Vector{String}}(
+        "a" => ["val_a = 1"],
+        "b" => ["<<a>>", "val_b = val_a + 1"],
+    )
+    code = "<<b>>"
+    result = Knit.resolve_ref_chunks(code, registry2)
+    @test occursin("val_a = 1", result)
+    @test occursin("val_b = val_a + 1", result)
+end
+
+@testset "ref.label chunk option" begin
+    input = raw"""
+    <<src>>=
+    msg = "ref_label_works"
+    @
+    <<copy, ref_label="src">>=
+
+    @
+    """
+    tex = _test_process_content(input, :RefLabel1)
+    @test occursin("ref_label_works", tex) || occursin("ref\\_label\\_works", tex)
+end
+
+@testset "ref.label with multiple labels" begin
+    input = raw"""
+    <<a>>=
+    xa = 10
+    @
+    <<b>>=
+    xb = 20
+    @
+    <<combined, ref_label="a,b">>=
+
+    @
+    """
+    tex = _test_process_content(input, :RefLabel2)
+    # 10 appears in chunk a's display AND in the combined chunk (reuse)
+    # 20 appears in chunk b's display AND in the combined chunk (reuse)
+    n10 = length(collect(eachmatch(r"\\DecValTok\{10\}", tex)))
+    n20 = length(collect(eachmatch(r"\\DecValTok\{20\}", tex)))
+    @test n10 >= 2  # chunk a + combined
+    @test n20 >= 2  # chunk b + combined
+end
+
+@testset "<<label>> inline references (ref_chunk)" begin
+    input = raw"""
+    <<setup>>=
+    x = 42
+    @
+    <<use>>=
+    <<setup>>
+    x + 1
+    @
+    """
+    tex = _test_process_content(input, :RefChunk1)
+    # The source display should show x = 42 from setup inlined into use.
+    # With highlighting, both "42" (from setup) and "1" (from use) appear.
+    @test occursin("\\DecValTok{42}", tex)  # 42 from setup (inlined)
+    @test occursin("\\DecValTok{1}", tex)    # 1 from use's own code
+end
+
+@testset "code option (literal string)" begin
+    input = raw"""
+    <<from_string, code="result = 999">>=
+
+    @
+    """
+    tex = _test_process_content(input, :CodeOpt1)
+    @test occursin("999", tex)
+end
+
+@testset "ref_chunk=false disables <<label>> resolution" begin
+    input = raw"""
+    <<setup>>=
+    x = 42
+    @
+    <<no_resolve, ref_chunk=false>>=
+    <<setup>>
+    @
+    """
+    # With ref_chunk=false, <<setup>> should NOT be resolved
+    # (it will error at runtime since <<setup>> is not valid Julia)
+    # We just check it doesn't crash if eval=false
+    input2 = raw"""
+    <<setup>>=
+    x = 42
+    @
+    <<no_resolve, ref_chunk=false, eval=false>>=
+    <<setup>>
+    @
+    """
+    tex = _test_process_content(input2, :RefChunkOff)
+    @test occursin("\\NormalTok{<<}", tex)
+end
+
+@testset "code chunk reuse full document" begin
+    input = raw"""
+    \documentclass{article}
+    \begin{document}
+    <<compute>>=
+    result = 10 + 20
+    @
+    <<reuse, ref_label="compute">>=
+
+    @
+    The result is \Sexpr{result}.
+    \end{document}
+    """
+    tex = _test_process_content(input, :FullReuse1)
+    @test occursin("\\DecValTok{10}", tex)  # source code 10 from compute shown
+    @test occursin("30", tex)  # inline result
+end

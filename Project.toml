@@ -1,6 +1,6 @@
 name = "Knit"
 uuid = "5fce85da-7251-4ef1-a53c-6bd2439e26ef"
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"

@@ -8,13 +8,12 @@ Each chunk is preceded by a comment marking its header.
 """
 function tangle(input_file::String; output_file::String = "")
     content = read(input_file, String)
-    chunk_pattern = r"<<(?<header>[^>]*)>>=[ \t]*\n(?<code>.*?)\n@[ \t]*(?:\n|$)"s
-    chunks = collect(eachmatch(chunk_pattern, content))
+    chunks = collect(eachmatch(CHUNK_PATTERN, content))
 
     lines = String[]
     for m in chunks
         header = String(m[:header])
-        code = String(m[:code])
+        code = chunk_code(m)
 
         push!(lines, "## ----$header----")
 

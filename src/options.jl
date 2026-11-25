@@ -27,6 +27,8 @@ const DEFAULT_CHUNK_OPTIONS = Dict{Symbol,Any}(
     :message   => true,
     :error     => true,
     :comment   => "##",
+    :size      => "normalsize",
+    :fig_keep  => "high",
 )
 
 const KNIT_OPTS = Dict{Symbol,Any}(
@@ -44,6 +46,13 @@ const KNIT_OPTS = Dict{Symbol,Any}(
 )
 
 const _chunk_defaults = copy(DEFAULT_CHUNK_OPTIONS)
+
+# A chunk: <<header>>= on its line, its code (possibly none), @ on its own line. (Lazily: an empty
+# chunk, a child's, ends at its own @, not at the next chunk's.)
+const CHUNK_PATTERN = r"<<(?<header>[^>]*)>>=[ \t]*\n(?<code>(?:.*?\n)??)@[ \t]*(?:\n|$)"s
+
+# The code of a match of CHUNK_PATTERN (without its last newline).
+chunk_code(m::RegexMatch) = String(chomp(m[:code]))
 
 """
     set_knit_option(key, value)
@@ -154,29 +163,65 @@ end
 
 is_valid_kv(x) = Meta.isexpr(x, :(=))
 
+# knitr's names for the options that have another one here
+const KNITR_NAMES = Dict("dev" => "fig_dev", "ref.label" => "ref_label")
+
+"""
+    knitr_style(str)
+
+Chunk options written as in knitr (and knitrmini), as Julia: `fig.cap=` is `fig_cap=` (`dev=` is
+`fig_dev=`), `TRUE`/`FALSE` are `true`/`false`, `NULL` is `nothing`. Strings are left as they are.
+"""
+function knitr_style(str::AbstractString)::String
+    # (outside strings only: split them out, convert the rest, put them back)
+    parts = String[]
+    pos = 1
+    for m in eachmatch(r"\"(?:[^\"\\]|\\.)*\"", str)
+        push!(parts, _knitr_code(str[pos:prevind(str, m.offset)]))
+        push!(parts, m.match)
+        pos = m.offset + ncodeunits(m.match)
+    end
+    push!(parts, _knitr_code(str[pos:end]))
+    return join(parts)
+end
+
+function _knitr_code(code::AbstractString)::String
+    code = replace(code, r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+|dev)(\s*=)(?!=)" => m -> begin
+        name, rest = match(r"^([^\s=]+)(.*)$"s, m).captures
+        get(KNITR_NAMES, name, replace(name, "." => "_")) * rest
+    end)
+    code = replace(code, r"\bTRUE\b" => "true", r"\bFALSE\b" => "false", r"\bNULL\b" => "nothing")
+    return code
+end
+
 """
     parse_options(str)
 
-Parse a comma-separated key=value string into a dictionary of chunk options.
-Handles quoted string values.
+Parse a comma-separated key=value string into a dictionary of chunk options. Handles quoted string
+values, and knitr's spellings (see [`knitr_style`](@ref)). Options that can't be read are an
+error, not dropped.
 """
 function parse_options(str::AbstractString)::Dict{Symbol,Any}
-    isempty(str) && return Dict{Symbol,Any}()
-    str = string('(', str, ')')
+    isempty(strip(str)) && return Dict{Symbol,Any}()
     str = replace(str, r"'([^']*)'" => s"\"\1\"")
-    ex = Meta.parse(str)
-    try
-        nt = if Meta.isexpr(ex, (:block, :tuple))
+    str = string('(', knitr_style(str), ')')
+    ex = try
+        Meta.parse(str)
+    catch e
+        error_knit("chunk options can't be read: $str ($(sprint(showerror, e)))")
+    end
+    nt = try
+        if Meta.isexpr(ex, (:block, :tuple))
             eval(Expr(:tuple, filter(is_valid_kv, ex.args)...))
         elseif is_valid_kv(ex)
             eval(Expr(:tuple, ex))
         else
             NamedTuple{}()
         end
-        return Dict{Symbol,Any}(pairs(nt))
-    catch
-        return Dict{Symbol,Any}()
+    catch e
+        error_knit("chunk options can't be read: $str ($(sprint(showerror, e)))")
     end
+    return Dict{Symbol,Any}(pairs(nt))
 end
 
 """
@@ -198,6 +243,8 @@ function parse_chunk_header(header_str::AbstractString)
         else
             name, opts = s, Dict{Symbol,Any}()
         end
+    elseif occursin('=', s[1:idx-1]) # (no label, as in knitr: all options, `child='x', eval=TRUE`)
+        name, opts = nothing, parse_options(s)
     else
         name = strip(s[1:idx-1])
         rest = strip(s[idx+1:end])

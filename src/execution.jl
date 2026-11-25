@@ -189,15 +189,14 @@ function execute_chunk(code::String, exec_module::Module, report::Report, option
             end
         end
 
-        # Keep only the last plot (fig.keep='high' behavior like knitr)
-        # Intermediate plot() + plot!() sequences should only show the final plot
-        last_plot_idx = 0
-        for i in eachindex(results)
-            if !isempty(results[i].figures)
-                last_plot_idx = i
-            end
-        end
-        if last_plot_idx > 0
+        # Which plots stay (fig_keep): "high"/"last", the last one (plot() then plot!() show only the
+        # final plot, as knitr's 'high'); "first"; "none"; "all"
+        keep = string(get(options, :fig_keep, "high"))
+        plotted = [i for i in eachindex(results) if !isempty(results[i].figures)]
+        last_plot_idx = isempty(plotted) || keep == "all" ? 0 :
+                        keep == "first" ? first(plotted) :
+                        keep == "none" ? -1 : last(plotted)
+        if last_plot_idx != 0 && !isempty(plotted)
             all_intermediate_figs = String[]
             for i in eachindex(results)
                 if i != last_plot_idx && !isempty(results[i].figures)
@@ -313,6 +312,15 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
     end
 
     is_hold = options[:results] == "hold"
+    is_asis = options[:results] == "asis"
+
+    # (text output, or a value: as it is with results="asis", else in verbatim, commented)
+    function text_block(text::AbstractString)::String
+        if is_asis
+            return endswith(text, "\n") ? String(text) : text * "\n"
+        end
+        return "\\begin{verbatim}\n" * chomp(_add_comment_prefix(String(text), comment_prefix)) * "\n\\end{verbatim}\n"
+    end
 
     warning_shown = Ref(0)
     message_shown = Ref(0)
@@ -359,14 +367,10 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
                 if is_hold
                     seg_latex = ""
                     if options[:message] && !isempty(seg.output)
-                        seg_latex *= "\\begin{verbatim}\n"
-                        seg_latex *= chomp(_add_comment_prefix(seg.output, comment_prefix))
-                        seg_latex *= "\n\\end{verbatim}\n"
+                        seg_latex *= text_block(seg.output)
                     end
                     if !isnothing(seg.result) && isempty(seg.output) && !has_figures
-                        seg_latex *= "\\begin{verbatim}\n"
-                        seg_latex *= _add_comment_prefix(Base.invokelatest(string, seg.result), comment_prefix)
-                        seg_latex *= "\n\\end{verbatim}\n"
+                        seg_latex *= text_block(Base.invokelatest(string, seg.result))
                     end
                     if !isempty(filtered_warning)
                         seg_latex *= "\\begin{verbatim}\n"
@@ -391,15 +395,11 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
                     flush_code!()
 
                     if options[:message] && !isempty(seg.output)
-                        latex *= "\\begin{verbatim}\n"
-                        latex *= chomp(_add_comment_prefix(seg.output, comment_prefix))
-                        latex *= "\n\\end{verbatim}\n"
+                        latex *= text_block(seg.output)
                     end
 
                     if !isnothing(seg.result) && isempty(seg.output) && !has_figures
-                        latex *= "\\begin{verbatim}\n"
-                        latex *= _add_comment_prefix(Base.invokelatest(string, seg.result), comment_prefix)
-                        latex *= "\n\\end{verbatim}\n"
+                        latex *= text_block(Base.invokelatest(string, seg.result))
                     end
 
                     if !isempty(filtered_warning)
@@ -436,6 +436,10 @@ function generate_chunk_latex(segments::Vector, options::Dict{Symbol,Any};
         flush_code!()
     end
 
+    size = string(get(options, :size, "normalsize"))
+    if size != "normalsize" && !isempty(latex)
+        latex = "{\\$size\n" * latex * "}\n"
+    end
     return latex
 end
 
@@ -476,26 +480,80 @@ function _resolve_lines(lines::Vector{String}, registry::Dict{String,Vector{Stri
 end
 
 """
+    KnitState
+
+What a knit found on its way, for the label snapshot: whether the document has children, and those
+skipped (`eval=false`).
+"""
+mutable struct KnitState
+    has_children::Bool
+    skipped::Vector{String}
+end
+KnitState() = KnitState(false, String[])
+
+# LaTeX constructs whose \Sexpr{} is text, not code (as knitrmini's .verbatim_patterns)
+const VERBATIM_PATTERNS = [
+    r"\\verb\*?\{[^}]*\}",
+    r"\\verb\*?([^A-Za-z]).*?\1",
+    r"\\mintinline\{[^}]*\}\{[^}]*\}",
+    r"\\mintinline\{[^}]*\}([^A-Za-z]).*?\1",
+    r"\\begin\{verbatim\*?\}.*?\\end\{verbatim\*?\}"s,
+    r"\\lstinline([^A-Za-z]).*?\1",
+    r"\\lstinline(?:\[[^\]]*\])?\{[^}]*\}",
+    r"\\begin\{lstlisting\}.*?\\end\{lstlisting\}"s,
+    r"\\begin\{minted\}.*?\\end\{minted\}"s,
+]
+
+# The byte ranges of text where \Sexpr{} is not evaluated: verbatim constructs, and comments.
+function _protected_ranges(text::AbstractString)
+    ranges = UnitRange{Int}[]
+    for pat in VERBATIM_PATTERNS
+        for m in eachmatch(pat, text)
+            push!(ranges, m.offset:(m.offset + ncodeunits(m.match) - 1))
+        end
+    end
+    for m in eachmatch(r"(?<!\\)%[^\n]*", text) # (a comment, to the end of its line)
+        push!(ranges, m.offset:(m.offset + ncodeunits(m.match) - 1))
+    end
+    return ranges
+end
+
+"""
+    weave_inline(text, exec_module)
+
+Text with its `\\Sexpr{...}` replaced by their values, evaluated now (in document order); not
+those in verbatim constructs or comments.
+"""
+function weave_inline(text::AbstractString, exec_module::Module)
+    occursin("\\Sexpr{", text) || return String(text)
+    protected = _protected_ranges(text)
+    out = IOBuffer()
+    pos = 1
+    for m in eachmatch(r"\\Sexpr\{([^}]+)\}", text)
+        any(r -> m.offset in r, protected) && continue
+        write(out, SubString(text, pos, prevind(text, m.offset)))
+        result = execute_inline(String(m.captures[1]), exec_module)
+        write(out, result === nothing ? "" : Base.invokelatest(string, result))
+        pos = m.offset + ncodeunits(m.match)
+    end
+    write(out, SubString(text, pos))
+    return String(take!(out))
+end
+
+"""
     process_content(content, exec_module, report; highlighting=:tokens, quiet=false,
-                    minted_bg=true, input_dir=pwd(), options_locked=Ref(false))
+                    minted_bg=true, input_dir=pwd(), options_locked=Ref(false), state=KnitState())
 
-Process a `.jnw` document string: parse and execute all code chunks, evaluate inline
-`\\Sexpr{...}` expressions, and return the woven LaTeX output.
-
-Chunks are processed in order and replaced in reverse to preserve offsets.
-Inline expressions are replaced after chunk processing.
+Process a `.jnw` document string in order: its text (each `\\Sexpr{...}` evaluated where it is)
+and its chunks (executed, woven as LaTeX); children are processed here too, in the same module (they
+see the parent's variables), unless `eval=false`. Returns the woven LaTeX.
 """
 function process_content(content::String, exec_module::Module, report::Report;
                          highlighting::Symbol=:tokens, quiet::Bool=false,
                          minted_bg::Bool=true, input_dir::String=pwd(),
-                         options_locked::Ref{Bool}=Ref(false))
-    chunk_pattern = r"<<(?<header>[^>]*)>>=[ \t]*\n(?<code>.*?)\n@[ \t]*(?:\n|$)"s
-
-    processed = content
-    chunks = collect(eachmatch(chunk_pattern, content))
+                         options_locked::Ref{Bool}=Ref(false), state::KnitState=KnitState())
+    chunks = collect(eachmatch(CHUNK_PATTERN, content))
     total = length(chunks)
-
-    vprintln_header(quiet, "Processing $total chunk(s)...")
 
     # ------------------------------------------------------------------
     # Pass 1: collect all chunk code into a registry, resolve ref.label
@@ -507,8 +565,12 @@ function process_content(content::String, exec_module::Module, report::Report;
 
     for (i, m) in enumerate(chunks)
         header_str = String(m[:header])
-        code = String(m[:code])
-        name, chunk_opts = parse_chunk_header(header_str)
+        code = chunk_code(m)
+        name, chunk_opts = try
+            parse_chunk_header(header_str)
+        catch e
+            error_knit("chunk $i (<<$header_str>>=): $(replace(sprint(showerror, e), "[Knit] " => ""))")
+        end
         _warn_unknown_options(header_str, name !== nothing ? name : i)
         opts = merge_chunk_options(chunk_opts)
 
@@ -537,35 +599,34 @@ function process_content(content::String, exec_module::Module, report::Report;
     end
 
     # ------------------------------------------------------------------
-    # Pass 2: execute chunks, resolving <<label>> inline references
+    # Pass 2, in order: the text before each chunk (its \Sexpr{}), then the chunk
     # ------------------------------------------------------------------
-    chunk_data = []
-
+    out = IOBuffer()
+    pos = 1
     for (i, info) in enumerate(chunk_infos)
         m, code, name, opts = info.m, info.code, info.name, info.opts
+        write(out, weave_inline(SubString(content, pos, prevind(content, m.offset)), exec_module))
+        pos = m.offset + ncodeunits(m.match)
 
         if opts[:child] !== nothing
-            vprintln_progress(quiet, "Chunk $i/$total: child '$(opts[:child])'")
-            child_paths = split(string(opts[:child]), ',')
-            child_tex = ""
+            state.has_children = true
+            child_paths = [strip(cp) for cp in split(string(opts[:child]), r"[;,]")]
+            if opts[:eval] === false # (skipped: its labels come from the last full build)
+                append!(state.skipped, child_paths)
+                continue
+            end
             for cp in child_paths
-                cp = strip(cp)
-                if !isabspath(cp)
-                    cp = joinpath(input_dir, cp)
-                end
-                if isfile(cp)
-                    with_indent(() -> begin
-                        tmp_tex = tempname() * ".tex"
-                        child_out = knit(cp; output_file=tmp_tex, compile=false, quiet=true, is_child=true)
-                        child_tex *= read(child_out, String) * "\n"
-                        rm(tmp_tex, force=true)
-                    end, 1)
+                quiet || println(_indent(), "  | ", name !== nothing ? name : "child '$cp'")
+                path = isabspath(cp) ? cp : joinpath(input_dir, cp)
+                if isfile(path)
+                    write(out, process_content(read(path, String), exec_module, report;
+                                               highlighting, quiet, minted_bg, input_dir,
+                                               options_locked, state))
+                    write(out, "\n")
                 else
-                    warn_knit("Child document not found: $cp")
+                    warn_knit("Child document not found: $path")
                 end
             end
-            push!(chunk_data, (m, code, (segments=Tuple{String, Any}[], output="", warning="", message="", error="", figures=String[]),
-                              name, opts, child_tex, true))
             continue
         end
 
@@ -574,7 +635,7 @@ function process_content(content::String, exec_module::Module, report::Report;
             code = resolve_ref_chunks(code, code_registry)
         end
 
-        vprintln_progress(quiet, "Chunk $i/$total: $(name !== nothing ? name : "(unnamed)")")
+        quiet || println(_indent(), "  | ", name !== nothing ? name : "$(get_knit_option(:unnamed_chunk_label))-$i")
 
         if opts[:eval]
             report.cur_chunk = i
@@ -610,37 +671,10 @@ function process_content(content::String, exec_module::Module, report::Report;
             result = (segments = segments, figures = String[])
         end
 
-        push!(chunk_data, (m, code, result, name, opts, "", false))
-    end
-
-    for item in reverse(chunk_data)
-        m, code, result, name, opts, child_tex, is_child = item
-        if is_child
-            latex_output = child_tex
-        elseif !opts[:include]
-            latex_output = ""
-        else
-            latex_output = generate_chunk_latex(result.segments, opts; highlighting, minted_bg)
+        if opts[:include]
+            write(out, generate_chunk_latex(result.segments, opts; highlighting, minted_bg))
         end
-        processed =
-            processed[1:m.offset-1] * latex_output * processed[m.offset+length(m.match):end]
     end
-
-    inline_pattern = r"\\Sexpr\{([^}]+)\}"
-    inline_matches = collect(eachmatch(inline_pattern, processed))
-    vprintln_header(quiet, "Inline:  $(length(inline_matches)) expression(s)")
-    inline_data = []
-    for m in inline_matches
-        code = String(m.captures[1])
-        result = execute_inline(code, exec_module)
-        push!(inline_data, (m, code, result))
-    end
-
-    for (m, code, result) in reverse(inline_data)
-        result_str = string(result)
-        processed =
-            processed[1:m.offset-1] * result_str * processed[m.offset+length(m.match):end]
-    end
-
-    return processed
+    write(out, weave_inline(SubString(content, pos), exec_module))
+    return String(take!(out))
 end

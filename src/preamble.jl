@@ -150,63 +150,51 @@ end
 """
     _build_preamble(doc, highlighting; minted_style=nothing, minted_bg=true)
 
-Build the LaTeX preamble block to insert into the document.
-
-Only includes packages/commands that are not already defined in the document.
-For `:tokens` highlighting, inserts pandoc-style macro definitions, `xcolor`,
-`fancyvrb`, and `framed`. For `:minted`, inserts `minted` and `xcolor` packages
-plus optional `\\usemintedstyle`.
+Build the LaTeX preamble block to insert into the document: only what the output uses, and not what
+the document defines already (as knitrmini does). Highlighted code (`Shaded`) brings `xcolor`,
+`fancyvrb`, `framed`, `shadecolor`, `Highlighting` and `Shaded`, and the definitions of the token
+macros it uses (`\\KeywordTok`...), only those; minted, its package, style and background; figures,
+`graphicx` (and `float` for `[H]`).
 
 Returns `(preamble_text, n_inserted, skipped_packages)`.
 """
 function _build_preamble(doc::AbstractString, highlighting::Symbol; minted_style::Union{Nothing,String} = nothing, minted_bg::Bool = true)
-    preamble_text = highlighting === :minted ? MINTED_PREAMBLE : HIGHLIGHTING_PREAMBLE
-    lines = split(strip(preamble_text), '\n')
-
     needed = String[]
     skipped = String[]
+    function add(line)
+        if _preamble_line_defined(doc, line)
+            push!(skipped, _extract_name(line))
+        elseif !(line in needed)
+            push!(needed, line)
+        end
+    end
+    lines = [strip(l) for l in split(strip(HIGHLIGHTING_PREAMBLE), '\n') if !isempty(strip(l))]
+    has_shaded = occursin(r"\\begin\{Shaded\}", doc)
+    has_minted = occursin(r"\\begin\{minted\}", doc)
+    tokens = Set(m.captures[1] for m in eachmatch(r"\\([A-Za-z]+Tok)\{", doc))
+    if has_shaded || has_minted || !isempty(tokens) || occursin(r"\\textcolor|\\color\{|\\definecolor", doc)
+        add("\\usepackage{xcolor}")
+    end
     for line in lines
-        stripped = strip(line)
-        isempty(stripped) && continue
-        if highlighting === :minted && !minted_bg && startswith(stripped, "\\definecolor{knitbg}")
-            continue
-        end
-        if !_preamble_line_defined(doc, stripped)
-            push!(needed, stripped)
-        else
-            push!(skipped, _extract_name(stripped))
+        name = match(r"^\\newcommand\{\\([A-Za-z]+)\}", line)
+        if name !== nothing # (a macro: if used)
+            used = endswith(name.captures[1], "Tok") ? name.captures[1] in tokens :
+                   occursin(Regex("\\\\" * name.captures[1] * "(?![A-Za-z])"), doc)
+            used && add(line)
+        elseif has_shaded && !startswith(line, "\\usepackage{xcolor}")
+            add(line)
         end
     end
-
-    if highlighting === :minted && minted_style !== nothing && !_has_usemintedstyle(doc)
-        push!(needed, "\\usemintedstyle{$minted_style}")
+    if has_minted
+        add("\\usepackage{minted}")
+        if minted_style !== nothing && !_has_usemintedstyle(doc)
+            push!(needed, "\\usemintedstyle{$minted_style}")
+        end
+        minted_bg && add("\\definecolor{knitbg}{rgb}{0.969, 0.969, 0.969}")
     end
-
     if occursin(r"\\includegraphics", doc)
-        if !_has_package(doc, "graphicx")
-            push!(needed, "\\usepackage{graphicx}")
-        else
-            push!(skipped, "graphicx")
-        end
-        if !_has_package(doc, "float")
-            push!(needed, "\\usepackage{float}")
-        else
-            push!(skipped, "float")
-        end
+        add("\\usepackage{graphicx}")
+        occursin(r"\\begin\{figure\}\[H\]", doc) && add("\\usepackage{float}")
     end
-
-    if occursin(r"\\begin\{minted\}", doc)
-        if !_has_package(doc, "minted")
-            push!(needed, "\\usepackage{minted}")
-        else
-            push!(skipped, "minted")
-        end
-        if !_has_definecolor(doc, "knitbg")
-            push!(needed, "\\definecolor{knitbg}{rgb}{0.969, 0.969, 0.969}")
-        else
-            push!(skipped, "knitbg")
-        end
-    end
-
     return join(needed, "\n"), length(needed), skipped
 end

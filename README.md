@@ -3,7 +3,11 @@
 [![CI](https://github.com/urtzienriquez/Knit.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/urtzienriquez/Knit.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/github/urtzienriquez/Knit.jl/graph/badge.svg?token=0CDIACFXR2)](https://codecov.io/github/urtzienriquez/Knit.jl)
 
-A literate programming processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with syntax highlighting.
+A literate programming processor for Julia — weave Julia code chunks and LaTeX in `.jnw` files, producing compiled PDFs with syntax highlighting. It works like [knitrmini](https://github.com/urtzienriquez/knitrmini) does for `.Rnw`:
+- **clean LaTeX:** nothing in the preamble unless the output uses it, and only what you haven't defined yourself;
+- **document order:** `\Sexpr{}` is evaluated where it stands;
+- **children** share the session, and the label snapshot gives the numbers of references to skipped children;
+- **builds and citations:** latexmk builds, and package citations.
 
 ## Installation
 
@@ -87,9 +91,13 @@ This requires `pip install Pygments` and the `minted` LaTeX package.
 
 The tree-sitter-jnoweb repo also ships [`jnoweb-fmt`](https://github.com/urtzienriquez/tree-sitter-jnoweb#formatting), a formatter that formats Julia chunks with JuliaFormatter and LaTeX prose with latexindent.
 
+## Children and the label snapshot
+
+A chunk with `child="part.jnw"` knits that file in its place, in the same session, so it sees the parent's variables. With `eval=false` the child is skipped. A full build keeps the labels of the whole document in `<input>-labels.aux`. A build with skipped children gets its `\ref`, `\pageref` and `\eqref` to their labels from that file, so a part can be built alone with its references numbered. This is the same snapshot, in the same format, as knitrmini's.
+
 ## PDF Compilation
 
-PDF compilation runs `pdflatex -shell-escape` automatically. If your document contains `\bibliography{}`, `\bibliographystyle{}`, or `\addbibresource{}`, the appropriate bibliography engine (bibtex or biber) is detected and run automatically.
+PDF compilation runs latexmk (`-interaction=nonstopmode -shell-escape -f -synctex=1`, as knitrmini). latexmk runs as many passes and bibliography runs (bibtex or biber) as needed, and only what changed. Without latexmk, the engine and the bibliography tool are run directly.
 
 You can use different LaTeX engines:
 
@@ -98,11 +106,22 @@ Knit.knit("document.jnw"; engine=:lualatex)
 Knit.knit("document.jnw"; engine=:xelatex)
 ```
 
-You can also compile an existing `.tex` file manually:
+You can also compile an existing `.tex` file manually, and remove its auxiliary files afterwards. `clean_aux` removes only the files latexmk recorded as generated; the `.tex`, the `.pdf` and the label snapshot stay:
 
 ```julia
 Knit.compile_pdf("document.tex")
+Knit.clean_aux("document.tex")
 ```
+
+Figure paths stay as written when the `.tex` goes beside its source, which is the one to publish. They become absolute when it goes elsewhere, where they must still be found.
+
+## Package citations
+
+`Knit.write_pkg_bib("packages.bib")` writes the citations of the packages your project depends on (their `CITATION.bib`) and of Julia. Each knit of a document in that folder then refreshes the file; it is never created without that call.
+
+## For editors
+
+`Knit.serve()` is a worker: it reads one command per line (`knit<TAB>input<TAB>output<TAB>compile<TAB>engine`), knits, and answers `\x01done<TAB>ok` (or `error<TAB>message`). An editor then starts Julia once and builds in seconds afterwards. [manuscript.nvim](https://github.com/urtzienriquez/manuscript.nvim) uses it.
 
 ## Chunk Options
 
@@ -115,14 +134,18 @@ code
 | Option | Default | Description |
 |--------|---------|-------------|
 | `echo` | `true` | Show code in output |
-| `eval` | `true` | Execute code |
-| `results` | `"markup"` | `"markup"` or `"hide"` |
+| `eval` | `true` | Execute code (a child chunk: knit the child) |
+| `results` | `"markup"` | `"markup"`, `"asis"` (output as it is: raw LaTeX), `"hold"` or `"hide"` |
+| `size` | `"normalsize"` | Font size of the chunk (`"small"`, `"footnotesize"`...) |
+| `fig_keep` | `"high"` | Which plots of a chunk stay: `"high"`/`"last"`, `"first"`, `"all"`, `"none"` |
 | `term` | `false` | Use terminal-style formatting |
 | `fig` | `true` | Include figures |
 | `fig_width` | `6` | Figure width (inches) |
 | `fig_height` | `4` | Figure height (inches) |
 | `dpi` | `96` | Figure resolution |
 | `out_width` | `\linewidth` | Output image width |
+
+Options can also be written as in knitr (and knitrmini): `fig.cap="..."` is `fig_cap`, `dev=` is `fig_dev`, `TRUE`/`FALSE` are `true`/`false`. An option that can't be read is an error that names the chunk.
 
 ## Examples
 
@@ -136,6 +159,6 @@ See the `examples/` directory for demo files:
 ## Requirements
 
 - Julia 1.6+
-- A LaTeX distribution with `pdflatex`, `xcolor`, `fancyvrb`, `framed`, `graphicx`, `float`
+- A LaTeX distribution with latexmk (or `pdflatex` alone), and `xcolor`, `fancyvrb`, `framed`, `graphicx` when the output uses them
 - For minted highlighting: Pygments (`pip install Pygments`) + the `minted` LaTeX package
 - For bibliography: `bibtex` or `biber` (auto-detected from `.tex` content)

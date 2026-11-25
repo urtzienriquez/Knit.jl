@@ -160,13 +160,28 @@ function is_pdf_up_to_date(tex_file::String, pdf_file::String, bib_engine::Union
     return false
 end
 
+const LATEXMK_FLAG = Dict(:pdflatex => "-pdf", :lualatex => "-lualatex", :xelatex => "-xelatex")
+
+"""
+    _latexmk(tex_file, engine; quiet=false)
+
+Compile with latexmk, as knitrmini does (`-interaction=nonstopmode -shell-escape -f -synctex=1`):
+it runs as many passes and bibliography runs as needed, and only what changed. Returns whether
+latexmk succeeded.
+"""
+function _latexmk(tex_file::String, engine::Symbol; quiet::Bool=false)::Bool
+    quiet || println(_indent(), "  latexmk ($engine)...")
+    flag = get(LATEXMK_FLAG, engine, "-pdf")
+    cmd = `latexmk $flag -interaction=nonstopmode -shell-escape -f -synctex=1 $(basename(tex_file))`
+    return cd(() -> success(pipeline(cmd, stdout=devnull, stderr=devnull)), dirname(tex_file))
+end
+
 """
     compile_pdf(tex_file; engine=nothing, bib_engine=nothing, quiet=false)
 
-Compile a `.tex` file to PDF using the specified LaTeX engine.
-
-Automatically runs bibliography tools (bibtex/biber) as needed, performs multiple
-compilation passes for references and citations, and parses the LaTeX log for errors.
+Compile a `.tex` file to PDF using the specified LaTeX engine: with latexmk (as knitrmini does), or,
+without it, by running the engine and the bibliography tool (bibtex/biber) as many times as the
+document seems to need. Parses the LaTeX log for errors.
 
 # Arguments
 - `tex_file::String`: path to the `.tex` file
@@ -179,22 +194,42 @@ Path to the generated `.pdf` file.
 """
 function compile_pdf(tex_file::String; engine::Union{Symbol,Nothing}=nothing,
                      bib_engine::Union{Symbol,Nothing}=nothing, quiet::Bool=false)
+    return first(_compile(tex_file; engine, bib_engine, quiet))
+end
+
+# compile_pdf, and whether it succeeded: (pdf path, ok).
+function _compile(tex_file::String; engine::Union{Symbol,Nothing}=nothing,
+                  bib_engine::Union{Symbol,Nothing}=nothing, quiet::Bool=false)
     if engine === nothing
         engine = get_knit_option(:engine)
     end
     tex_file = abspath(tex_file)
     work_dir = dirname(tex_file)
     base_name = first(splitext(basename(tex_file)))
+    pdf_file = joinpath(work_dir, base_name * ".pdf")
+    log_path = joinpath(work_dir, base_name * ".log")
+
+    if Sys.which("latexmk") !== nothing
+        ok = _latexmk(tex_file, Symbol(engine); quiet)
+        ok || warn_knit("latexmk ($engine) had non-zero exit status")
+        summary = _parse_latex_log(log_path)
+        if !isempty(summary.errors)
+            print_log_summary(summary; label="[Knit-error]", max_per=5)
+        elseif (!isempty(summary.warnings) || !isempty(summary.badboxes)) && !quiet
+            print_log_summary(summary; label="[Knit-warning]", max_per=5)
+        end
+        isfile(pdf_file) || println_error_label("PDF not produced: $pdf_file")
+        return pdf_file, ok && isfile(pdf_file)
+    end
 
     tex_content = read(tex_file, String)
     engine_detected = bib_engine !== nothing ? bib_engine : detect_bib_engine(tex_content)
 
     total_passes = determine_passes(tex_content)
 
-    pdf_file = joinpath(work_dir, base_name * ".pdf")
     if is_pdf_up_to_date(tex_file, pdf_file, engine_detected, work_dir, base_name)
         vprintln_info(quiet, "PDF is up to date.")
-        return pdf_file
+        return pdf_file, true
     end
 
     function run_latex(pass::Int)
@@ -239,7 +274,6 @@ function compile_pdf(tex_file::String; engine::Union{Symbol,Nothing}=nothing,
         run_latex(pass) || warn_knit("$engine (pass $pass/$total_passes) had non-zero exit")
     end
 
-    log_path = joinpath(work_dir, base_name * ".log")
     summary = _parse_latex_log(log_path)
 
     if !isempty(summary.errors)
@@ -249,11 +283,11 @@ function compile_pdf(tex_file::String; engine::Union{Symbol,Nothing}=nothing,
     end
 
     if isfile(pdf_file)
-        return pdf_file
+        return pdf_file, isempty(summary.errors)
     else
         println_error_label("PDF not produced: $pdf_file")
         println_error_label("See $log_path for full details")
-        return pdf_file
+        return pdf_file, false
     end
 end
 

@@ -192,50 +192,68 @@ end
     @test Knit._extract_name("\\unknown{stuff}") == "\\unknown{stuff}"  # fallback
 end
 
-@testset "_build_preamble" begin
-    # === highlighting mode, empty doc → all lines needed ===
-    result, n_ins, skipped = Knit._build_preamble("", :tokens)
-    @test n_ins > 10  # many lines from HIGHLIGHTING_PREAMBLE
-    @test isempty(skipped)
-    @test occursin("\\usepackage{xcolor}", result)
+@testset "_build_preamble: only what the output uses" begin
+    shaded = "\\begin{Shaded}\n\\begin{Highlighting}[]\n\\KeywordTok{function} \\NormalTok{f}\n\\end{Highlighting}\n\\end{Shaded}"
 
-    # === highlighting mode, doc already has xcolor → one line skipped ===
-    result, n_ins, skipped = Knit._build_preamble("\\usepackage{xcolor}", :tokens)
-    @test !occursin("\\usepackage{xcolor}", result)  # skipped
+    # === nothing used → nothing inserted ===
+    result, n_ins, skipped = Knit._build_preamble("Just text.", :tokens)
+    @test n_ins == 0
+    @test isempty(result)
+
+    # === highlighted code → its environments, and the macros it uses (only those) ===
+    result, n_ins, skipped = Knit._build_preamble(shaded, :tokens)
+    for line in ("\\usepackage{xcolor}", "\\usepackage{fancyvrb}", "\\usepackage{framed}",
+                 "\\newenvironment{Shaded}", "\\DefineVerbatimEnvironment{Highlighting}",
+                 "\\newcommand{\\KeywordTok}", "\\newcommand{\\NormalTok}")
+        @test occursin(line, result)
+    end
+    @test !occursin("StringTok", result)
+    @test !occursin("VerbBar", result)
+    @test isempty(skipped)
+
+    # === highlighted code, doc already has xcolor and a macro → those skipped ===
+    result, n_ins, skipped = Knit._build_preamble("\\usepackage{xcolor}\n\\newcommand{\\KeywordTok}[1]{#1}\n" * shaded, :tokens)
+    @test !occursin("\\usepackage{xcolor}", result)
+    @test !occursin("\\newcommand{\\KeywordTok}", result)
     @test "xcolor" in skipped
 
-    # === minted mode, empty doc ===
-    result, n_ins, skipped = Knit._build_preamble("", :minted)
+    # === minted code ===
+    minted = "\\begin{minted}{julia}\nx = 1\n\\end{minted}"
+    result, n_ins, skipped = Knit._build_preamble(minted, :minted)
     @test occursin("\\usepackage{minted}", result)
+    @test occursin("\\usepackage{xcolor}", result)
     @test occursin("\\definecolor{knitbg}", result)
 
-    # === minted mode, some items already defined ===
-    result, n_ins, skipped = Knit._build_preamble("\\usepackage{xcolor}", :minted)
-    @test !occursin("\\usepackage{xcolor}", result)  # skipped
+    # === minted, xcolor already loaded ===
+    result, n_ins, skipped = Knit._build_preamble("\\usepackage{xcolor}\n" * minted, :minted)
+    @test !occursin("\\usepackage{xcolor}", result)
     @test "xcolor" in skipped
 
-    # === minted mode + minted_style ===
-    result, n_ins, skipped = Knit._build_preamble("", :minted; minted_style="monokai")
+    # === minted + minted_style (unless defined already) ===
+    result, n_ins, skipped = Knit._build_preamble(minted, :minted; minted_style="monokai")
     @test occursin("\\usemintedstyle{monokai}", result)
-
-    # === minted mode + minted_style already defined ===
-    result, n_ins, skipped = Knit._build_preamble("\\usemintedstyle{monokai}", :minted; minted_style="monokai")
+    result, n_ins, skipped = Knit._build_preamble("\\usemintedstyle{monokai}\n" * minted, :minted; minted_style="monokai")
     @test !occursin("\\usemintedstyle", result)
 
-    # === minted mode + minted_bg=false → skip knitbg color ===
-    result, n_ins, skipped = Knit._build_preamble("", :minted; minted_bg=false)
+    # === minted + minted_bg=false → no knitbg color ===
+    result, n_ins, skipped = Knit._build_preamble(minted, :minted; minted_bg=false)
     @test !occursin("\\definecolor{knitbg}", result)
 
-    # === doc has \includegraphics → adds graphicx + float ===
+    # === minted mode, but no minted code → nothing ===
+    result, n_ins, skipped = Knit._build_preamble("Text.", :minted)
+    @test isempty(result)
+
+    # === \\includegraphics → graphicx; float only for [H] figures ===
     result, n_ins, skipped = Knit._build_preamble("\\includegraphics{fig.png}", :tokens)
     @test occursin("\\usepackage{graphicx}", result)
+    @test !occursin("\\usepackage{float}", result)
+    result, n_ins, skipped = Knit._build_preamble("\\begin{figure}[H]\n\\includegraphics{fig.png}\n\\end{figure}", :tokens)
     @test occursin("\\usepackage{float}", result)
 
-    # === doc has \includegraphics but graphicx already defined ===
+    # === \\includegraphics but graphicx already defined ===
     result, n_ins, skipped = Knit._build_preamble("\\usepackage{graphicx}\n\\includegraphics{fig.png}", :tokens)
-    @test !occursin("\\usepackage{graphicx}", result)  # already there
+    @test !occursin("\\usepackage{graphicx}", result)
     @test "graphicx" in skipped
-    @test occursin("\\usepackage{float}", result)       # still needed
 end
 
 # ──────────────────────────────────────────────────────────────────────
@@ -248,7 +266,15 @@ end
     @test Knit.parse_options("eval=true") == Dict(:eval => true)
     @test Knit.parse_options("echo=false, eval=true") == Dict(:echo => false, :eval => true)
     @test Knit.parse_options("results=\"hide\"") == Dict(:results => "hide")
-    @test Knit.parse_options("results=hide") == Dict{Symbol,Any}()
+    # an option that can't be read is an error (it was silently dropped, with all the others)
+    @test_throws ErrorException Knit.parse_options("results=hide")
+    @test_throws ErrorException Knit.parse_options("echo=fals, eval=true")
+
+    # knitr's spellings, as in knitrmini: fig.cap, dev, ref.label, TRUE/FALSE/NULL; strings untouched
+    @test Knit.parse_options("fig.cap=\"A. b = c\", echo=FALSE") == Dict(:fig_cap => "A. b = c", :echo => false)
+    @test Knit.parse_options("fig.width=4, dev='png', ref.label='a', out.width=NULL") ==
+          Dict(:fig_width => 4, :fig_dev => "png", :ref_label => "a", :out_width => nothing)
+    @test Knit.parse_options("eval=TRUE, results='asis'") == Dict(:eval => true, :results => "asis")
 
     # integer values
     @test Knit.parse_options("fig_width=7") == Dict(:fig_width => 7)
@@ -1203,4 +1229,253 @@ end
     tex = _test_process_content(input, :FullReuse1)
     @test occursin("\\DecValTok{10}", tex)  # source code 10 from compute shown
     @test occursin("30", tex)  # inline result
+end
+
+# ──────────────────────────────────────────────────────────────────────
+# parity with knitrmini: order, verbatim, children, asis, size, fig_keep,
+# the label snapshot, latexmk, clean_aux, paths, serve, package citations
+# ──────────────────────────────────────────────────────────────────────
+function _knit_doc(dir, files; name="doc.jnw", kwargs...)
+    for (f, text) in files
+        mkpath(dirname(joinpath(dir, f)))
+        write(joinpath(dir, f), text)
+    end
+    out = Knit.knit(joinpath(dir, name); compile=false, quiet=true, kwargs...)
+    return read(out, String)
+end
+
+@testset "\\Sexpr in document order; not in verbatim or comments" begin
+    mktempdir() do dir
+        tex = _knit_doc(dir, ["doc.jnw" => raw"""
+        \documentclass{article}
+        \begin{document}
+        <<a>>=
+        x = 1
+        @
+        Before: \Sexpr{x}.
+        <<b>>=
+        x = 2
+        @
+        After: \Sexpr{x}. Verbatim: \verb|\Sexpr{x}|. % comment \Sexpr{x}
+        \end{document}
+        """])
+        @test occursin("Before: 1.", tex)
+        @test occursin("After: 2.", tex)
+        @test occursin("\\verb|\\Sexpr{x}|", tex)
+        @test occursin("% comment \\Sexpr{x}", tex)
+    end
+end
+
+@testset "children: the parent's session; eval=false skips one, its labels from the snapshot" begin
+    mktempdir() do dir
+        files = [
+            "doc.jnw" => raw"""
+            \documentclass{article}
+            \begin{document}
+            <<setup>>=
+            n = 7
+            @
+            <<main, child='1-main.jnw'>>=
+            @
+            <<appendix, child='2-appendix.jnw', eval=FALSE>>=
+            @
+            \end{document}
+            """,
+            "1-main.jnw" => raw"""
+            \section{Main}\label{sec:main}
+            Seven is \Sexpr{n}; see Appendix~\ref{sec:app}.
+            """,
+            "2-appendix.jnw" => raw"""
+            \section{Appendix}\label{sec:app}
+            Only in the appendix.
+            """,
+        ]
+        write(joinpath(dir, "doc-labels.aux"), "\\newlabel{sec:app}{{A}{9}}\n")
+        tex = _knit_doc(dir, files)
+        @test occursin("Seven is 7; see Appendix~A.", tex)
+        @test !occursin("Only in the appendix", tex)
+    end
+end
+
+@testset "results=asis, size, fig_keep option" begin
+    mktempdir() do dir
+        tex = _knit_doc(dir, ["doc.jnw" => raw"""
+        \documentclass{article}
+        \begin{document}
+        <<t, echo=FALSE, results='asis'>>=
+        println("\\textbf{Raw} LaTeX")
+        @
+        <<s, size='small'>>=
+        1 + 1
+        @
+        \end{document}
+        """])
+        @test occursin("\\textbf{Raw} LaTeX", tex)
+        @test !occursin("## \\textbf{Raw}", tex)
+        @test occursin("{\\small\n", tex)
+    end
+end
+
+@testset "the preamble: nothing for a document without code shown" begin
+    mktempdir() do dir
+        tex = _knit_doc(dir, ["doc.jnw" => raw"""
+        \documentclass{article}
+        \begin{document}
+        <<x, echo=false, results='hide'>>=
+        x = 3
+        @
+        Three: \Sexpr{x}.
+        \end{document}
+        """])
+        @test occursin("Three: 3.", tex)
+        @test !occursin("\\usepackage", tex)
+        @test !occursin("Tok", tex)
+    end
+end
+
+@testset "clean_output, the output never over the input, relative figure paths beside the source" begin
+    mktempdir() do dir
+        tex = _knit_doc(dir, ["doc.jnw" => raw"""
+        % !TeX root = doc.jnw
+        \documentclass{article}
+        \newif\iftexlab
+        \iftexlab
+        \input{part.jnw}
+        \fi
+        \begin{document}
+        \includegraphics{figs/drawn.pdf}
+        \end{document}
+        """])
+        @test !occursin("TeX root", tex)
+        @test !occursin("iftexlab", tex)
+        @test occursin("\\includegraphics{figs/drawn.pdf}", tex)
+        elsewhere = joinpath(mktempdir(), "doc.tex")
+        Knit.knit(joinpath(dir, "doc.jnw"); output_file=elsewhere, compile=false, quiet=true)
+        @test occursin(joinpath(dir, "figs", "drawn.pdf"), read(elsewhere, String))
+        write(joinpath(dir, "plain.txt"), "x")
+        @test_throws ErrorException Knit.knit(joinpath(dir, "plain.txt"); compile=false, quiet=true)
+    end
+end
+
+const HAS_LATEXMK = Sys.which("latexmk") !== nothing && Sys.which("pdflatex") !== nothing
+
+@testset "latexmk; the engine argument; the label snapshot of a full build; clean_aux" begin
+    if !HAS_LATEXMK
+        @info "latexmk/pdflatex not found: skipped"
+    else
+        mktempdir() do dir
+            write(joinpath(dir, "doc.jnw"), raw"""
+            \documentclass{article}
+            \begin{document}
+            <<main, child='1-main.jnw'>>=
+            @
+            \end{document}
+            """)
+            write(joinpath(dir, "1-main.jnw"), "\\section{Main}\\label{sec:main}\nText.\n")
+            pdf = Knit.knit(joinpath(dir, "doc.jnw"); compile=true, quiet=true, engine=:pdflatex)
+            @test isfile(pdf) && endswith(pdf, ".pdf")
+            @test isfile(joinpath(dir, "doc.fdb_latexmk")) # (latexmk ran)
+            @test occursin("\\newlabel{sec:main}{{1}", read(joinpath(dir, "doc-labels.aux"), String))
+            removed = Knit.clean_aux(joinpath(dir, "doc.tex"); quiet=true)
+            @test joinpath(dir, "doc.aux") in removed
+            @test !isfile(joinpath(dir, "doc.aux"))
+            @test isfile(joinpath(dir, "doc.pdf")) && isfile(joinpath(dir, "doc.tex"))
+            @test isfile(joinpath(dir, "doc-labels.aux"))
+        end
+    end
+end
+
+@testset "serve: knits on request, answers each" begin
+    mktempdir() do dir
+        write(joinpath(dir, "doc.jnw"), "\\documentclass{article}\n\\begin{document}\nTwo: \\Sexpr{1 + 1}.\n\\end{document}\n")
+        input = IOBuffer(join(["knit\t$(joinpath(dir, "doc.jnw"))\t$(joinpath(dir, "out.tex"))\t0\t",
+                               "knit\t$(joinpath(dir, "missing.jnw"))\t$(joinpath(dir, "x.tex"))\t0\t",
+                               "bogus", "quit", "knit\tnever"], "\n"))
+        output = IOBuffer()
+        redirect_stdout(devnull) do
+            Knit.serve(input, output)
+        end
+        answers = split(String(take!(output)), '\n'; keepempty=false)
+        @test answers[1] == "\x01done\tok"
+        @test startswith(answers[2], "\x01done\terror\t")
+        @test startswith(answers[3], "\x01done\terror\tunknown command")
+        @test length(answers) == 3 # (quit: nothing after it)
+        @test occursin("Two: 2.", read(joinpath(dir, "out.tex"), String))
+    end
+end
+
+@testset "package citations: written, refreshed on knit, never created" begin
+    mktempdir() do dir
+        project = joinpath(dir, "Project.toml")
+        write(project, "[deps]\n")
+        cited = Knit.write_pkg_bib(joinpath(dir, "packages.bib"); project, quiet=true)
+        @test isempty(cited)
+        bib = read(joinpath(dir, "packages.bib"), String)
+        @test startswith(bib, Knit.PKG_BIB_MARKER)
+        @test occursin("@article{Julia-2017", bib)
+        write(joinpath(dir, "other.bib"), "@misc{mine, title={Mine}}\n")
+        Knit.update_pkg_bib(dir)
+        @test read(joinpath(dir, "other.bib"), String) == "@misc{mine, title={Mine}}\n" # (not its own)
+        # knitted into another folder: the one beside the source is refreshed, none made there
+        write(joinpath(dir, "packages.bib"), Knit.PKG_BIB_MARKER * "\n% stale\n")
+        write(joinpath(dir, "doc.jnw"), "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n")
+        mkpath(joinpath(dir, "build"))
+        Knit.knit(joinpath(dir, "doc.jnw"); output_file=joinpath(dir, "build", "doc.tex"), compile=false, quiet=true)
+        @test !occursin("% stale", read(joinpath(dir, "packages.bib"), String))
+        @test !isfile(joinpath(dir, "build", "packages.bib"))
+    end
+end
+
+@testset "serve: a package you develop changed since it was loaded: the worker exits (3), to start anew" begin
+    mktempdir() do dir
+        pkg = joinpath(dir, "Fake")
+        mkpath(joinpath(pkg, "src"))
+        write(joinpath(pkg, "Project.toml"), "name = \"Fake\"\nuuid = \"0e8e3d36-1d6a-4f3e-9d0b-5a8a8f3c2b11\"\n")
+        write(joinpath(pkg, "src", "Fake.jl"), "module Fake\nanswer() = 42\nend\n")
+        write(joinpath(dir, "doc.jnw"), "\\documentclass{article}\n\\begin{document}\n<<a>>=\nusing Fake\n@\nA: \\Sexpr{Fake.answer()}.\n\\end{document}\n")
+        knit_path = dirname(dirname(pathof(Knit)))
+        script = """
+        push!(LOAD_PATH, $(repr(dir)))
+        using Knit
+        Knit.serve()
+        """
+        env = copy(ENV)
+        env["JULIA_LOAD_PATH"] = "$(knit_path):$(dir):@stdlib"
+        p = open(pipeline(setenv(`$(Base.julia_cmd()) --startup-file=no -e $script`, env; dir=dir); stderr=devnull), "r+")
+        println(p, "knit\tdoc.jnw\tout.tex\t0\t"); flush(p)
+        answer = ""
+        while !eof(p)
+            l = readline(p)
+            if startswith(l, "\x01done")
+                answer = l
+                break
+            end
+        end
+        @test answer == "\x01done\tok"
+        @test occursin("A: 42.", read(joinpath(dir, "out.tex"), String))
+        sleep(1.1)
+        touch(joinpath(pkg, "src", "Fake.jl")) # (developed: changed)
+        println(p, "knit\tdoc.jnw\tout2.tex\t0\t"); flush(p)
+        wait(p)
+        @test p.exitcode == 3
+        @test !isfile(joinpath(dir, "out2.tex"))
+    end
+end
+
+@testset "a chunk header without a label: all options (child='x', eval=TRUE)" begin
+    name, opts = Knit.parse_chunk_header("child='c.jnw', eval=TRUE")
+    @test name === nothing
+    @test opts[:child] == "c.jnw"
+    @test opts[:eval] === true
+    name, opts = Knit.parse_chunk_header("main, child='c.jnw', eval=FALSE")
+    @test name == "main"
+    @test opts[:child] == "c.jnw" && opts[:eval] === false
+    mktempdir() do dir
+        write(joinpath(dir, "c.jnw"), "Child text here.\n")
+        write(joinpath(dir, "r.jnw"), "\\documentclass{article}\n\\begin{document}\n<<child='c.jnw', eval=TRUE>>=\n@\n\\end{document}\n")
+        redirect_stdout(devnull) do
+            knit(joinpath(dir, "r.jnw"); output_file=joinpath(dir, "r.tex"), compile=false)
+        end
+        @test occursin("Child text here.", read(joinpath(dir, "r.tex"), String))
+    end
 end
